@@ -185,7 +185,7 @@ function New-RSUser ($RSHost, $AccessToken, $Email, $FirstName, $LastName, $Comp
 
     $contentType = "application/json"
 
-    $newUserHeader =  = @{
+    $newUserHeader = @{
         "X_API_VERSION"="1.5";
         "Authorization"="Bearer $AccessToken"
     }
@@ -204,16 +204,16 @@ function New-RSUser ($RSHost, $AccessToken, $Email, $FirstName, $LastName, $Comp
     
     $newUserResult = Invoke-WebRequest -UseBasicParsing -Uri "https://$RSHost/api/users" -Method Post -Headers $newUserHeader -ContentType $contentType -Body ($newUserBodyPayload | ConvertTo-Json)
     
-    if($newUserResult.StatusCode -eq "204") {
+    if($newUserResult.StatusCode -eq "201") {
         $newUserHref = $newUserResult.Headers.Get_Item('Location')
         Write-Log -Message "Successfully created new RightScale user: $Email! Href: $newUserHref" -OutputToConsole
         $newUserBodyPayload | Add-Member -MemberType NoteProperty -Name "rs_user_href" -Value $newUserHref
-        New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Summary "Successfully created new RightScale user: $Email!" -Detail ($newUserBodyPayload | ConvertTo-Json)
+        New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "Successfully created new RightScale user: $Email!" -Detail ($newUserBodyPayload | ConvertTo-Json)
         RETURN $true
     }
     else {
         Write-Log -Message "Error creating new RightScale user: $Email! Status Code: $($newUserResult.StatusCode)" -OutputToConsole
-        New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Summary "Error creating new RightScale user: $Email!" -Detail "Status Code: $($newUserResult.StatusCode)`n`n$($newUserBodyPayload | ConvertTo-Json)"
+        New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "Error creating new RightScale user: $Email!" -Detail "Status Code: $($newUserResult.StatusCode)`n`n$($newUserBodyPayload | ConvertTo-Json)"
         RETURN $false
     }
 }
@@ -374,7 +374,7 @@ Write-Log -Message "$initialRSGRSUsersCount RightScale User(s) found." -OutputTo
 
 # Determine if users need to be created or deleted
 $usersToModify = Compare-Object -ReferenceObject $ldapUsers -DifferenceObject $rsGRSUsers -Property email
-$usersToCreate = $usersToModify | Where-Object { $_.SideIndicator -eq "<=" } | Select-Object -ExpandProperty InputObject
+$usersToCreate = $usersToModify | Where-Object { $_.SideIndicator -eq "<=" } | Select-Object -ExpandProperty email
 $usersToDelete = $usersToModify | Where-Object { $_.SideIndicator -eq "=>" } | Where-Object { $_.email -like "*$EMAIL_DOMAIN"} | Select-Object -ExpandProperty email
 
 # Create new users
@@ -385,36 +385,7 @@ if($usersToCreate.count -gt 0){
     foreach($user in $usersToCreate) {
         # Create New User and Set identity_provider, principal_uid, first_name, last_name, email, company and phone
         $ldapUser = $ldapUsers | Where-Object {$_.email -eq $user}
-        <#
-        Write-Log -Message "Creating new user $($ldapUser.email)..." -OutputToConsole
 
-        $newUserBodyPayload = @{
-            "user" = @{
-                "first_name" = $($ldapUser.givenName)
-                "last_name" = $($ldapUser.sn)
-                "company" = $COMPANY_NAME
-                "email" = $($ldapUser.email)
-                "phone" = $($ldapUser.telephoneNumber)
-                "identity_provider_href" = $IDP_HREF
-                "principal_uid" = $($ldapUser.$PRINCIPAL_UID_ATTRIBUTE)
-            }
-        } | ConvertTo-Json
-        
-        $newUserResult = Invoke-WebRequest -UseBasicParsing -Uri "https://$RS_HOST/api/users" -Method Post -Headers $cmHeader -ContentType $contentType -Body $newUserBodyPayload
-        
-        if($newUserResult.StatusCode -eq "204") {
-            $newUserHref = $null
-            $newUserHref = $newUserResult.Headers.Get_Item('Location')
-            Write-Log -Message "Successfully created $($ldapUser.email)! Href: $newUserHref" -OutputToConsole
-            #$newUsersCreated += "$user ($newUserHref)"
-            $newUsersCreated += $newUserBodyPayload
-            #$newUserId = $newUserHref | Split-Path -Leaf
-        }
-        else {
-            Write-Log -Message "Error creating $($ldapUser.email)! Status Code: $($newUserResult.StatusCode)" -OutputToConsole
-            $newUsersNotCreated += $ldapUser
-        }
-        #>
         $newUserParams = @{
             "FirstName" = $($ldapUser.givenName)
             "LastName" = $($ldapUser.sn)
@@ -424,7 +395,7 @@ if($usersToCreate.count -gt 0){
             "IdentityProvider" = $IDP_HREF
             "PrincipalUID" = $($ldapUser.$PRINCIPAL_UID_ATTRIBUTE)
         }
-        #$newRSUserResult = New-RSUser -RSHost $RS_HOST -AccessToken $accessToken -Email $($ldapUser.email) -FirstName $($ldapUser.givenName) -LastName $($ldapUser.sn) -Company $COMPANY_NAME -Phone $($ldapUser.telephoneNumber) -IdentityProvider $IDP_HREF -PrincipalUID $($ldapUser.$PRINCIPAL_UID_ATTRIBUTE)
+        
         $newRSUserResult = New-RSUser -RSHost $RS_HOST -AccessToken $accessToken @newUserParams
         if($newRSUserResult -eq $true) {
             $newUsersCreated += $ldapUser
@@ -487,24 +458,31 @@ foreach ($ldapGroup in $ldapGroups) {
     $group = $rsGRSGroups | Where-Object { $_.name -eq $ldapGroup.cn }
     if ($group -ne $null) {
         Write-Log -Message "Group: $($ldapGroup.cn) (RS ID: $($group.id))" -OutputToConsole
-        foreach ($member in $ldapGroup.members) {
-            $user_id = $null
-            $user_email = $null
-            $user_email = $ldapUsers | Where-Object { $_.dn -eq $member } | Select-Object -ExpandProperty email
-            $user_id = $rsGRSUsers | Where-Object { $_.email -eq $user_email } | Select-Object -ExpandProperty id
-            if($user_id -eq $null) {
-                Write-Log -Message "Error retrieving $user_email RightScale ID. Skipping..." -OutputToConsole
-            }
-            else {
-                $object = New-Object -TypeName PSObject
-                $object | Add-Member -MemberType NoteProperty -Name user_id -Value $user_id
-                $object | Add-Member -MemberType NoteProperty -Name user_mail -Value $user_email
-                $object | Add-Member -MemberType NoteProperty -Name group_id -Value $group.id
-                $object | Add-Member -MemberType NoteProperty -Name group_name -Value $ldapGroup.cn
-                $desiredMemberships += $object
-                Write-Log -Message "*Member: $user_email (RS ID: $user_id)" -OutputToConsole
+        if($ldapGroup.members.count -gt 0) {
+            foreach ($member in $ldapGroup.members) {
+                $user_id = $null
+                $user_email = $null
+                $user_email = $ldapUsers | Where-Object { $_.dn -eq $member } | Select-Object -ExpandProperty email
+                $user_id = $rsGRSUsers | Where-Object { $_.email -eq $user_email } | Select-Object -ExpandProperty id
+                if($user_id -eq $null) {
+                    Write-Log -Message "Error retrieving $user_email RightScale ID. Skipping..." -OutputToConsole
+                }
+                else {
+                    $object = New-Object -TypeName PSObject
+                    $object | Add-Member -MemberType NoteProperty -Name user_id -Value $user_id
+                    $object | Add-Member -MemberType NoteProperty -Name user_mail -Value $user_email
+                    $object | Add-Member -MemberType NoteProperty -Name group_id -Value $group.id
+                    $object | Add-Member -MemberType NoteProperty -Name group_name -Value $ldapGroup.cn
+                    $desiredMemberships += $object
+                    Write-Log -Message "* Member: $user_email (RS ID: $user_id)" -OutputToConsole
+                }
             }
         }
+        else {
+            Write-Log -Message "* No members" -OutputToConsole
+        }
+
+        
     }
     else {
         Write-Log -Message "$($ldapGroup.cn) does not exist! Please create it first!" -OutputToConsole
@@ -513,12 +491,13 @@ foreach ($ldapGroup in $ldapGroups) {
 
 # Update Group memberships - "replace"
 # Replaces the Users in a Group. If an empty list of Users is passed in the request, then all the Users are removed from the Group given in the request.
-$groups = $desiredMemberships | Select-Object -ExpandProperty group_id -Unique
-foreach ($group in $groups) {
+#$groups = $desiredMemberships | Select-Object -ExpandProperty group_id -Unique
+foreach ($group in $ldapGroups) {
     $userPayload = @()
-    $memberships = $desiredMemberships | Where-Object { $_.group_id -eq $group }
-    if($memberships.count -gt 0) {
-        $groupName = $memberships | Select-Object -First 1 -ExpandProperty group_name
+    $group_name = $ldapGroup.cn
+    $group_id = $rsGRSGroups | Where-Object { $_.name -eq $ldapGroup.cn } | Select-Object -ExpandProperty id
+    $memberships = $desiredMemberships | Where-Object { $_.group_id -eq $group_id }
+    if($memberships) {
         foreach ($membership in $memberships) {
             $user_id = $($membership.user_id)
             $object = New-Object -TypeName PSObject
@@ -529,26 +508,26 @@ foreach ($group in $groups) {
         }
     }
     
-    Write-Log -Message "Updating '$groupName' membership..." -OutputToConsole
+    Write-Log -Message "Updating '$group_name' membership..." -OutputToConsole
 
     $membershipBodyPayload = @{
         "group" = @{
-            "id" = $group
-            "href" = "/grs/orgs/$GRS_ACCOUNT/groups/$group"
+            "id" = $group_id
+            "href" = "/grs/orgs/$GRS_ACCOUNT/groups/$group_id"
             "kind" = "group"
         }
         "users" = @(
             $userPayload
         )
     } | ConvertTo-Json
-    New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Updating Group: $groupName" -Detail "Desired membership: $membershipBodyPayload"
+    New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Updating Group: $group_name" -Detail "Desired membership: $membershipBodyPayload"
     $membershipResult = Invoke-WebRequest -UseBasicParsing -Uri "https://$RS_HOST/grs/orgs/$GRS_ACCOUNT/memberships" -Method Put -Headers $grsHeader -ContentType $contentType -Body $membershipBodyPayload
     
     if($membershipResult.StatusCode -eq "204") {
-        Write-Log -Message "Successfully updated '$groupName' membership!" -OutputToConsole
+        Write-Log -Message "Successfully updated '$group_name' membership!" -OutputToConsole
     }
     else {
-        Write-Log -Message "Error updating '$groupName' membership!" -OutputToConsole
+        Write-Log -Message "Error updating '$group_name' membership!" -OutputToConsole
     }
 }
 
