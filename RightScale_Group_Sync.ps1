@@ -86,7 +86,7 @@
 #     Advanced: false
 #   LIST_OF_GROUPS:
 #     Category: LDAP
-#     Description: "Comma seperated list of Groups to sync. Example: RightScale_Admins,RightScale_Observers"
+#     Description: "Comma separated list of Groups to sync. Example: RightScale_Admins,RightScale_Observers"
 #     Input Type: single
 #     Required: false
 #     Advanced: false
@@ -129,7 +129,7 @@ param(
     $GROUP_CLASS = $ENV:GROUP_CLASS, # The Directory Services Object Class for groups of users. Example: groupOfNames
     $USER_CLASS = $ENV:USER_CLASS, # The Directory Services Object Class for users. Example: person
     $GROUP_SEARCH_STRING = $ENV:GROUP_SEARCH_STRING, # LDAP search string to use to filter groups to sync. Wildcard must be added if required. Example: RightScaleGroup*
-    $LIST_OF_GROUPS = $ENV:LIST_OF_GROUPS, # Comma seperated list of Groups to sync. Example: RightScale_Admins,RightScale_Observers
+    $LIST_OF_GROUPS = $ENV:LIST_OF_GROUPS, # Comma separated list of Groups to sync. Example: RightScale_Admins,RightScale_Observers
     $PRINCIPAL_UID_ATTRIBUTE = $ENV:PRINCIPAL_UID_ATTRIBUTE, # The name of the LDAP attribute to use for the RightScale principal_uid
     $EMAIL_DOMAIN = $ENV:EMAIL_DOMAIN, # The email domain to filter RightScale users on. Example: email.com
     $PURGE_USERS = $ENV:PURGE_USERS # Set to 'true' to remove user affiliations from RightScale that are no longer members of an LDAP group
@@ -137,7 +137,7 @@ param(
 
 $errorActionPreference = 'stop'
 
-# crontab infomation
+# crontab information
 # ensure script has execute permission set
 # ensure PATH is available in crontab
 # use config file (groupsync.config.ps1), stored in the same path 
@@ -250,7 +250,7 @@ function New-RSUser ($RSHost, $AccessToken, $GRSAccount, $Email, $FirstName, $La
                 $newUserAffiliationResult = Invoke-WebRequest -UseBasicParsing -Uri "https://$RSHost/grs/orgs/$GRSAccount/users" -Method Post -Headers $grsHeader -ContentType $contentType -Body $newUserAffiliationBodyPayload
                 
                 if($newUserAffiliationResult.StatusCode -eq "201") {
-                    Write-Log -Message "Sucessfully affiliated $Email with Organization!" -OutputToConsole
+                    Write-Log -Message "Successfully affiliated $Email with Organization!" -OutputToConsole
                     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Successfully affiliated $Email with Organization" -Detail $newUserAffiliationResult.RawContent
                 }
                 else {
@@ -348,7 +348,7 @@ function Remove-RSUser ($RSHost, $AccessToken, $GRSAccount, $UserID, $Email) {
 ## Main
 Write-Log -Message "Group Sync Starting..." -OutputToConsole
 
-# Look for config file and if exists, use to set paramters
+# Look for config file and if exists, use to set parameters
 $parentPath = Split-Path -Parent $PSCommandPath
 $configFile = Join-Path -Path $parentPath -ChildPath "groupsync.config.ps1"
 if(Test-Path $configFile) {
@@ -368,7 +368,7 @@ $oauthResult = Invoke-RestMethod -UseBasicParsing -Uri "https://$RS_HOST/api/oau
 $accessToken = $oauthResult.access_token
 
 if (-not($accessToken)) {
-    Write-Log -Message "Error retreiving access token!" -OutputToConsole
+    Write-Log -Message "Error retrieving access token!" -OutputToConsole
     EXIT 1
 }
 
@@ -448,14 +448,14 @@ try {
     $rawGroups = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_DN' '$groupsFilter' dn cn member" -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue) 2>&1
 
     if($lastexitcode -ne 0) {
-        $ldapErrorMessage = "Error retrieveing groups from LDAP!"
+        $ldapErrorMessage = "Error retrieving groups from LDAP!"
         Write-Log "$ldapErrorMessage Error: $ldapGroupLookupError" -OutputToConsole
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($ldapGroupLookupError | Out-String)
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
         EXIT 1
     }
     elseif (-not($rawGroups)) {
-        $ldapErrorMessage = "Error retrieveing groups from LDAP!"
+        $ldapErrorMessage = "Error retrieving groups from LDAP!"
         Write-Log "$ldapErrorMessage Error: No groups returned!" -OutputToConsole
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail "No groups returned with filter: $groupsFilter"
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
@@ -464,11 +464,11 @@ try {
     else {
         $rawGroups = $rawGroups | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
         $rawGroups = $rawGroups | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
-        $rawGroups = $rawGroups -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into seperate objects
+        $rawGroups = $rawGroups -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
     }
 }
 catch {
-    $ldapErrorMessage = "Error retrieveing groups from LDAP!"
+    $ldapErrorMessage = "Error retrieving groups from LDAP!"
     Write-Log "$ldapErrorMessage Error: $($_)" -OutputToConsole
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($_ | Out-String)
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
@@ -503,14 +503,14 @@ try {
     #$rawUsers = & ldapsearch -LLL -x -H $LDAP_HOST -D $LDAP_USER -w $LDAP_USER_PASSWORD -b $BASE_DN $userFilter sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE
     $rawUsers = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_DN' '$userFilter' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
     if($lastexitcode -ne 0) {
-        $ldapErrorMessage = "Error retrieveing users from LDAP!"
+        $ldapErrorMessage = "Error retrieving users from LDAP!"
         Write-Log "$ldapErrorMessage Error: $ldapUserLookupError" -OutputToConsole
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($ldapUserLookupError | Out-String)
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
         EXIT 1
     }
     elseif (-not($rawUsers)) {
-        $ldapErrorMessage = "Error retrieveing users from LDAP!"
+        $ldapErrorMessage = "Error retrieving users from LDAP!"
         Write-Log "$ldapErrorMessage Error: No users returned!" -OutputToConsole
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail "No groups returned with filter: $userFilter"
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
@@ -519,11 +519,11 @@ try {
     else {
         $rawUsers = $rawUsers | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
         $rawUsers = $rawUsers | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
-        $rawUsers = $rawUsers -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into seperate objects
+        $rawUsers = $rawUsers -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
     }
 }
 catch {
-    $ldapErrorMessage = "Error retrieveing users from LDAP!"
+    $ldapErrorMessage = "Error retrieving users from LDAP!"
     Write-Log "$ldapErrorMessage Error: $($_)" -OutputToConsole
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($_ | Out-String)
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
@@ -670,7 +670,7 @@ foreach ($ldapGroup in $ldapGroups) {
         Set-RSGroupMembership -RSHost $RS_HOST -AccessToken $accessToken -GRSAccount $GRS_ACCOUNT -GroupName $group_name -GroupID $group_id -UserPayload $userPayload     
     }
     else {
-        Write-Log -Message "$($ldapGroup.cn) does not exist! Please create it first!" -OutputToConsole
+        Write-Log -Message "The group '$($ldapGroup.cn)' does not exist! Please create it first!" -OutputToConsole
     }
 }
 
