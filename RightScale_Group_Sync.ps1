@@ -145,10 +145,13 @@ $errorActionPreference = 'stop'
 # to run every 15 minutes:
 # */15 * * * * /path/to/script/rightscale_group_sync.ps1
 
+
+# Define log file
 #$currentTime = (New-TimeSpan -Start (Get-Date -Date "01/01/1970") -End (Get-Date)).Ticks
 #$logFilePath = Join-Path "/tmp" "rs_groupsync_$currentTime.log"
 $logFilePath = "/tmp/rightscale_group_sync.log"
 
+# Delete log file if it already exists as history is saved in RS Audit Entires
 if(Test-Path $logFilePath) {
     Remove-Item -Path $logFilePath
 }
@@ -159,7 +162,6 @@ function Write-Log ($Message, [switch]$OutputToConsole) {
         New-Item -Path $logFilePath -ItemType "File" > $null
     }
     
-    #$currentTime = (New-TimeSpan -Start (Get-Date -Date "01/01/1970") -End (Get-Date)).Ticks #epoch time
     $currentTime = Get-Date -Format "dd-MM-yyyy HH:mm:ss z"
     $logMessage = "[$currentTime] $Message"
     $logMessage | Out-File -FilePath $logFilePath -Append -Encoding "UTF8"
@@ -171,8 +173,6 @@ function Write-Log ($Message, [switch]$OutputToConsole) {
 
 function New-RSAuditEntry ($RSHost, $AccessToken, $Auditee, $Summary, $Detail) {
     try {
-        #Write-Log -Message "Creating RightScale Audit Entry '$Summary'..." -OutputToConsole
-
         $contentType = "application/json"
         
         $auditHeader = @{
@@ -225,44 +225,16 @@ function New-RSUser ($RSHost, $AccessToken, $GRSAccount, $Email, $FirstName, $La
         
         if($newUserResult.StatusCode -eq "201") {
             $newUserHref = $newUserResult.Headers.Get_Item('Location')
-            Write-Log -Message "Successfully created new RightScale user: $Email! Href: $newUserHref" -OutputToConsole
-            $newUserBodyPayload | Add-Member -MemberType NoteProperty -Name "rs_user_href" -Value $newUserHref
+            $newUserId = $newUserHref | Split-Path -Leaf
+            $newUserBodyPayload.Add("rs_user_href", $newUserHref)
+            Write-Log -Message "Successfully created new RightScale user: $Email (RS ID:$newUserId)!" -OutputToConsole
             New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Successfully created new RightScale user: $Email!" -Detail ($newUserBodyPayload | ConvertTo-Json)
             
-            try {
-                # Affiliate user with the org
-                Write-Log -Message "Affiliating $Email with Organization..." -OutputToConsole
-                $newUserId = $newUserHref | Split-Path -Leaf
-
-                $contentType = "application/json"
-
-                $grsHeader = @{
-                    "X-API-Version"="2.0";
-                    "Authorization"="Bearer $AccessToken"
-                }
-
-                $newUserAffiliationBodyPayload = [ordered]@{
-                    "id" = $newUserId
-                    "href" = "/grs/users/$newUserId"
-                    "kind" = "user"
-                } | ConvertTo-Json
-            
-                $newUserAffiliationResult = Invoke-WebRequest -UseBasicParsing -Uri "https://$RSHost/grs/orgs/$GRSAccount/users" -Method Post -Headers $grsHeader -ContentType $contentType -Body $newUserAffiliationBodyPayload
-                
-                if($newUserAffiliationResult.StatusCode -eq "201") {
-                    Write-Log -Message "Successfully affiliated $Email with Organization!" -OutputToConsole
-                    New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Successfully affiliated $Email with Organization" -Detail $newUserAffiliationResult.RawContent
-                }
-                else {
-                    Write-Log -Message "Error affiliating $Email with Organization! Status Code: $($newUserResult.StatusCode)" -OutputToConsole
-                    New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Error affiliating new RightScale user: $Email!" -Detail "Status Code: $($newUserAffiliationResult.StatusCode)`n`n$($newUserAffiliationBodyPayload | ConvertTo-Json)`n`n$($newUserAffiliationResult.RawContent)"
-                }
-            }
-            catch {
-                Write-Log -Message "Error affiliating $Email! $($_ | Out-String)" -OutputToConsole
-                New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Error affiliating user: $Email!" -Detail ($_ | Out-String)
-            }
-            RETURN $true
+            # Return relevant information to update GRS user list
+            $userObject = New-Object -TypeName PSObject
+            $userObject | Add-Member -MemberType NoteProperty -Name id -Value $newUserId
+            $userObject | Add-Member -MemberType NoteProperty -Name email -Value $Email
+            RETURN $userObject
         }
         else {
             Write-Log -Message "Error creating new RightScale user: $Email! Status Code: $($newUserResult.StatusCode)" -OutputToConsole
@@ -318,7 +290,7 @@ function Set-RSGroupMembership ($RSHost, $AccessToken, $GRSAccount, $GroupName, 
 
 function Remove-RSUser ($RSHost, $AccessToken, $GRSAccount, $UserID, $Email) {
     try {
-        Write-Log -Message "Removing $Email affiliation with organization... " -OutputToConsole
+        Write-Log -Message "Removing $Email (RS ID: $UserId) affiliation with organization... " -OutputToConsole
         
         $contentType = "application/json"
 
@@ -330,16 +302,16 @@ function Remove-RSUser ($RSHost, $AccessToken, $GRSAccount, $UserID, $Email) {
         $deleteResult = Invoke-WebRequest -UseBasicParsing -Uri "https://$RSHost/grs/orgs/$GRSAccount/users/$UserID" -Method Delete -Headers $grsHeader -ContentType $contentType
 
         if ($deleteResult.StatusCode -eq 204) {
-            Write-Log -Message "Successfully removed $Email affiliation!" -OutputToConsole
+            Write-Log -Message "Successfully removed $Email (RS ID: $UserId) affiliation!" -OutputToConsole
             RETURN $true
         }
         else {
-            Write-Log -Message "Error removing $Email affiliation! Status Code: $($deleteResult.StatusCode)" -OutputToConsole
+            Write-Log -Message "Error removing $Email (RS ID: $UserId) affiliation! Status Code: $($deleteResult.StatusCode)" -OutputToConsole
             RETURN $false
         }
     }
     catch {
-        Write-Log -Message "Error removing $Email affiliation! $($_ | Out-String)" -OutputToConsole
+        Write-Log -Message "Error removing $Email (RS ID: $UserId) affiliation! $($_ | Out-String)" -OutputToConsole
         New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Error removing $Email affiliation!" -Detail ($_ | Out-String)
     }
 }
@@ -443,7 +415,6 @@ else {
 }
 
 # Get the LDAP groups
-#$rawGroups = ldapsearch -LLL -x -H $LDAP_HOST -D $LDAP_USER -w $LDAP_USER_PASSWORD -b $BASE_DN $groupsFilter dn cn member
 try {
     $rawGroups = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_DN' '$groupsFilter' dn cn member" -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue) 2>&1
 
@@ -500,7 +471,6 @@ $userFilter = "(&(objectClass=$USER_CLASS)(|$groupsToFilter))"
 # Get the LDAP users
 try {
     Write-Log -Message "Getting all members of filtered LDAP groups..." -OutputToConsole
-    #$rawUsers = & ldapsearch -LLL -x -H $LDAP_HOST -D $LDAP_USER -w $LDAP_USER_PASSWORD -b $BASE_DN $userFilter sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE
     $rawUsers = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_DN' '$userFilter' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
     if($lastexitcode -ne 0) {
         $ldapErrorMessage = "Error retrieving users from LDAP!"
@@ -586,8 +556,10 @@ if($usersToCreate.count -gt 0){
         }
         
         $newRSUserResult = New-RSUser -RSHost $RS_HOST -AccessToken $accessToken -GRSAccount $GRS_ACCOUNT @newUserParams
-        if($newRSUserResult -eq $true) {
-            $newUsersCreated += $ldapUser
+        if($newRSUserResult -ne $false) {
+            $newUsersCreated += $newRSUserResult
+            # Update RS GRS User list to include the necessary details for the new user
+            $rsGRSUsers += $newRSUserResult
         }
         else {
             $newUsersNotCreated += $ldapUser
@@ -595,8 +567,8 @@ if($usersToCreate.count -gt 0){
     }
 
     # Create audit entry for users created and not created
-    $usersCreatedDetails = "Users created successfully: $($newUsersCreated | Out-String)"
-    $usersCreatedDetails += "Users NOT created successfully: $($newUsersNotCreated | Out-String)"
+    $usersCreatedDetails = "Users created successfully:`n$($newUsersCreated | Out-String)"
+    $usersCreatedDetails += "Users NOT created successfully:`n$($newUsersNotCreated | Out-String)"
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: User(s) Created" -Detail $usersCreatedDetails
 }
 else {
@@ -605,21 +577,10 @@ else {
 
 if($newUsersCreated.count -gt 0) {
     Write-Log -Message "New user(s) created: $($newUsersCreated.count)" -OutputToConsole
-    
     # Sleep to allow for replication
     $sleepSeconds = 60
-    Write-Log -Message "Sleeping $sleepSeconds seconds to allow for user replication..." -OutputToConsole
+    Write-Log -Message "Sleeping $sleepSeconds seconds to allow for replication..." -OutputToConsole
     Start-Sleep -Seconds $sleepSeconds
-
-    # Get Users again to account for newly added users
-    Write-Log -Message "Getting All RightScale Users..." -OutputToConsole
-    $rsGRSUsers = Invoke-RestMethod -UseBasicParsing -Uri "https://$RS_HOST/grs/orgs/$GRS_ACCOUNT/users" -Method Get -Headers $grsHeader -ContentType $contentType
-    if(-not($rsGRSUsers)) {
-        Write-Log -Message "Error retrieving users from RightScale!" -OutputToConsole
-        New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
-        EXIT 1
-    }
-    Write-Log -Message "$($rsGRSUsers.Count) RightScale User(s) found." -OutputToConsole
 }
 
 # Get RightScale groups
@@ -659,14 +620,12 @@ foreach ($ldapGroup in $ldapGroups) {
                     $object | Add-Member -MemberType NoteProperty -Name href -Value "/grs/users/$user_id"
                     $object | Add-Member -MemberType NoteProperty -Name kind -Value "user"
                     $userPayload += $object
-                    
                 }
             }
         }
         else {
             Write-Log -Message "* No members" -OutputToConsole
         }
-        
         Set-RSGroupMembership -RSHost $RS_HOST -AccessToken $accessToken -GRSAccount $GRS_ACCOUNT -GroupName $group_name -GroupID $group_id -UserPayload $userPayload     
     }
     else {
@@ -674,7 +633,7 @@ foreach ($ldapGroup in $ldapGroups) {
     }
 }
 
-# Remove User Associations for users that are no longer members of LDAP groups
+# Remove User affiliation from org for users that are no longer members of LDAP groups
 # Users must not be a member of any groups, so we do this last
 $usersDeleted = @()
 $usersNotDeleted = @()
@@ -683,7 +642,6 @@ if($usersToDelete.count -gt 0){
     if($PURGE_USERS -eq $true) {
         foreach($user in $usersToDelete) {
             $rsGRSUser = $rsGRSUsers | Where-Object { $_.email -eq $user}
-            
             $deleteResult = Remove-RSUser -RSHost $RS_HOST -AccessToken $accessToken -GRSAccount $GRS_ACCOUNT -UserID $($rsGRSUser.id) -Email $($rsGRSUser.email)
             if ($deleteResult -eq $true) {
                 $usersDeleted += $rsGRSUser
@@ -692,10 +650,9 @@ if($usersToDelete.count -gt 0){
                 $usersNotDeleted += $rsGRSUser
             }
         }
-        
         # Create audit entry for users removed and not removed
-        $usersDeletedDetails = "Users removed successfully:$($usersDeleted | Out-String)`n"
-        $usersDeletedDetails += "Users NOT removed successfully:`n $($usersNotDeleted | Out-String)`n"
+        $usersDeletedDetails = "Users removed successfully:`n$($usersDeleted | Out-String)`n"
+        $usersDeletedDetails += "Users NOT removed successfully:`n$($usersNotDeleted | Out-String)`n"
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: User(s) Removed" -Detail $usersDeletedDetails
     }
     else {
@@ -706,5 +663,6 @@ else {
     Write-Log -Message "No users to remove." -OutputToConsole
 }
 
+# We're done!
 Write-Log -Message "Group Sync Complete!" -OutputToConsole
 New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete" -Detail (Get-Content -Path $logFilePath | Out-String)
