@@ -82,12 +82,6 @@
 #     Input Type: single
 #     Required: true
 #     Advanced: false
-#   BASE_USER_DN:
-#     Category: LDAP
-#     Description: "The base dn for users in the Directory Service. Example: ou=Users,DC=some,DC=domain"
-#     Input Type: single
-#     Required: true
-#     Advanced: false
 #   GROUP_CLASS:
 #     Category: LDAP
 #     Description: "The Directory Services Object Class for groups of users. Example: groupOfNames"
@@ -151,7 +145,6 @@ param(
     $LDAP_USER_PASSWORD = $ENV:LDAP_USER_PASSWORD, # Password for the LDAP user
     $START_TLS = $ENV:START_TLS, # Set to true to use StartTLS
     $BASE_GROUP_DN = $ENV:BASE_GROUP_DN, # The base dn for groups in the Directory Service. Example: DC=some,DC=domain
-    $BASE_USER_DN = $ENV:BASE_USER_DN, # The base dn for users in the Directory Service. Example: DC=some,DC=domain
     $GROUP_CLASS = $ENV:GROUP_CLASS, # The Directory Services Object Class for groups of users. Example: groupOfNames
     $USER_CLASS = $ENV:USER_CLASS, # The Directory Services Object Class for users. Example: person
     $GROUP_SEARCH_STRING = $ENV:GROUP_SEARCH_STRING, # LDAP search string to use to filter groups to sync. Wildcard must be added if required. Example: RightScaleGroup*
@@ -384,7 +377,7 @@ New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHre
 $parameterErrors = 0
 $failedParameters = ""
 $sensitiveParameters = "REFRESH_TOKEN","LDAP_USER_PASSWORD"
-$regularParameters = "COMPANY_NAME","DEFAULT_PHONE_NUMBER","CM_SSO_ACCOUNT","GRS_ACCOUNT","RS_HOST","IDP_HREF","LDAP_HOST","LDAP_USER","BASE_GROUP_DN","BASE_USER_DN","GROUP_CLASS","USER_CLASS","PRINCIPAL_UID_ATTRIBUTE","EMAIL_DOMAIN"
+$regularParameters = "COMPANY_NAME","DEFAULT_PHONE_NUMBER","CM_SSO_ACCOUNT","GRS_ACCOUNT","RS_HOST","IDP_HREF","LDAP_HOST","LDAP_USER","BASE_GROUP_DN","GROUP_CLASS","USER_CLASS","PRINCIPAL_UID_ATTRIBUTE","EMAIL_DOMAIN"
 $parametersToValidate = $regularParameters + $sensitiveParameters
 foreach($parameterToValidate in $parametersToValidate) {
     if (((Get-Variable -Name $parameterToValidate -ValueOnly -ErrorAction SilentlyContinue) -eq "") -or ((Get-Variable -Name $parameterToValidate -ValueOnly -ErrorAction SilentlyContinue) -eq $null)) {
@@ -496,7 +489,8 @@ $allLDAPRSUsers = $ldapGroups.members | Select-Object -Unique
 foreach ($ldapUser in $allLDAPRSUsers) {
     try {
         Write-Log -Message "Getting user details for '$ldapUser'..." -OutputToConsole
-        $rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
+        #$rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' '(objectClass=$USER_CLASS)' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
+        $rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
         if($lastexitcode -ne 0) {
             $ldapErrorMessage = "Error retrieving user details from LDAP!"
             Write-Log "$ldapErrorMessage Error: $ldapUserLookupError" -OutputToConsole
@@ -515,20 +509,25 @@ foreach ($ldapUser in $allLDAPRSUsers) {
             $rawUser = $rawUser | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
             $rawUser = $rawUser | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
             $rawUser = $rawUser -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
-
-            $phoneNumber = $null
-            $object = New-Object -TypeName PSObject
-            $object | Add-Member -MemberType NoteProperty -Name dn -Value $($rawUser -split '\n' -match '^dn:' -replace 'dn:\s','')
-            $object | Add-Member -MemberType NoteProperty -Name sn -Value $($rawUser -split '\n' -match '^sn:' -replace 'sn:\s','')
-            $object | Add-Member -MemberType NoteProperty -Name givenName -Value $($rawUser -split '\n' -match '^givenName:' -replace 'givenName:\s','')
-            $object | Add-Member -MemberType NoteProperty -Name email -Value $($rawUser -split '\n' -match '^mail:' -replace 'mail:\s','')
-            $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value  $($rawUser -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
-            $phoneNumber = $($rawUser -split '\n' -match '^telephoneNumber:' -replace 'telephoneNumber:\s','')
-            if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
-                $phoneNumber = $DEFAULT_PHONE_NUMBER
+            $objectClass = $($rawUser -split '\n' -match '^objectClass:' -replace 'objectClass:\s','')
+            if($objectClass -contains $USER_CLASS) {
+                $phoneNumber = $null
+                $object = New-Object -TypeName PSObject
+                $object | Add-Member -MemberType NoteProperty -Name dn -Value $($rawUser -split '\n' -match '^dn:' -replace 'dn:\s','')
+                $object | Add-Member -MemberType NoteProperty -Name sn -Value $($rawUser -split '\n' -match '^sn:' -replace 'sn:\s','')
+                $object | Add-Member -MemberType NoteProperty -Name givenName -Value $($rawUser -split '\n' -match '^givenName:' -replace 'givenName:\s','')
+                $object | Add-Member -MemberType NoteProperty -Name email -Value $($rawUser -split '\n' -match '^mail:' -replace 'mail:\s','')
+                $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value  $($rawUser -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
+                $phoneNumber = $($rawUser -split '\n' -match '^telephoneNumber:' -replace 'telephoneNumber:\s','')
+                if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
+                    $phoneNumber = $DEFAULT_PHONE_NUMBER
+                }
+                $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
+                $ldapUsers += $object
             }
-            $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
-            $ldapUsers += $object
+            else {
+                Write-Log -Message "Object: $ldapUser is not of objectClass $USER_CLASS! objectClass(es): $($objectClass -join ', ')" -OutputToConsole
+            }
         }
     }
     catch {
