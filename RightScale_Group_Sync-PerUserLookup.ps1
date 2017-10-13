@@ -164,10 +164,7 @@ $errorActionPreference = 'stop'
 # to run every 15 minutes:
 # */15 * * * * /path/to/script/rightscale_group_sync.ps1
 
-
 # Define log file
-#$currentTime = (New-TimeSpan -Start (Get-Date -Date "01/01/1970") -End (Get-Date)).Ticks
-#$logFilePath = Join-Path "/tmp" "rs_groupsync_$currentTime.log"
 $logFilePath = "/tmp/rightscale_group_sync.log"
 
 # Delete log file if it already exists as history is saved in RS Audit Entires
@@ -489,7 +486,6 @@ $allLDAPRSUsers = $ldapGroups.members | Select-Object -Unique
 foreach ($ldapUser in $allLDAPRSUsers) {
     try {
         Write-Log -Message "Getting user details for '$ldapUser'..." -OutputToConsole
-        #$rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' '(objectClass=$USER_CLASS)' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
         $rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
         if($lastexitcode -ne 0) {
             $ldapErrorMessage = "Error retrieving user details from LDAP!"
@@ -539,67 +535,6 @@ foreach ($ldapUser in $allLDAPRSUsers) {
     }
 }
 Write-Log -Message "$($ldapUsers.Count) LDAP User(s) found." -OutputToConsole
-
-<# 
-# Build user LDAP filter
-# Potentially expensive query, alternative is to do a single search per user dn, or get all LDAP users and do a client side filter
-$groupsToFilter = $null
-foreach ($group in $ldapGroups.dn) {
-    $groupsToFilter += "(isMemberOf=$group)"
-}
-$userFilter = "(&(objectClass=$USER_CLASS)(|$groupsToFilter))"
-
-# Get the LDAP users of the discovered RightScale groups
-try {
-    Write-Log -Message "Getting all members of filtered LDAP groups..." -OutputToConsole
-    $rawUsers = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_USER_DN' '$userFilter' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
-    if($lastexitcode -ne 0) {
-        $ldapErrorMessage = "Error retrieving users from LDAP!"
-        Write-Log "$ldapErrorMessage Error: $ldapUserLookupError" -OutputToConsole
-        New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($ldapUserLookupError | Out-String)
-        New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
-        EXIT 1
-    }
-    elseif (-not($rawUsers)) {
-        $ldapErrorMessage = "Error retrieving users from LDAP!"
-        Write-Log "$ldapErrorMessage Error: No users returned!" -OutputToConsole
-        New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail "No groups returned with filter: $userFilter"
-        New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
-        EXIT 1
-    }
-    else {
-        $rawUsers = $rawUsers | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
-        $rawUsers = $rawUsers | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
-        $rawUsers = $rawUsers -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
-    }
-}
-catch {
-    $ldapErrorMessage = "Error retrieving users from LDAP!"
-    Write-Log "$ldapErrorMessage Error: $($_)" -OutputToConsole
-    New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($_ | Out-String)
-    New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
-    EXIT 1
-}
-
-# Create LDAP users object
-$ldapUsers = @()
-foreach ($user in $rawUsers) {
-    $phoneNumber = $null
-    $object = New-Object -TypeName PSObject
-    $object | Add-Member -MemberType NoteProperty -Name dn -Value $($user -split '\n' -match '^dn:' -replace 'dn:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name sn -Value $($user -split '\n' -match '^sn:' -replace 'sn:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name givenName -Value $($user -split '\n' -match '^givenName:' -replace 'givenName:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name email -Value $($user -split '\n' -match '^mail:' -replace 'mail:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value  $($user -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
-    $phoneNumber = $($user -split '\n' -match '^telephoneNumber:' -replace 'telephoneNumber:\s','')
-    if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
-        $phoneNumber = $DEFAULT_PHONE_NUMBER
-    }
-    $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
-    $ldapUsers += $object
-}
-Write-Log -Message "$($ldapUsers.Count) LDAP User(s) found." -OutputToConsole
-#>
 
 ## RightScale Governance
 # Get RightScale users
