@@ -17,6 +17,10 @@ It uses ldapsearch(Part of [openldap](https://www.openldap.org/software/download
 1. A query is run against your Organization in RightScale to collect the groups that match your LDAP groups and adjust their membership to match your LDAP groups membership.  
 1. (Optional) And finally, users that are no longer members of your LDAP groups are removed from your RightScale Organization.  
 
+## Script Differences
+RightScale_Group_Sync-PerUserLookup.ps1 - Performs a single LDAP query per user to collect details.
+RightScale_Group_Sync-PerGroupLookup.ps1 - Performs an LDAP query using a filter of 'isMemberOf' scoped to the discovered groups.
+
 ## Script Parameters
 `LDAP_HOST` : Connection string for LDAP host.  
 ldap:// for non-secure and ldaps:// for secure.  
@@ -34,6 +38,9 @@ Example: cn=Directory Manager
 
 `BASE_GROUP_DN` : The base dn for groups in the Directory Service.  
 Example: ou=Groups,DC=some,DC=domain
+
+`BASE_USER_DN` : The base dn for users in the Directory Service.  
+Example: ou=Users,DC=some,DC=domain
 
 `GROUP_CLASS` : The Directory Services Object Class for groups of users.   
 Example: groupOfNames
