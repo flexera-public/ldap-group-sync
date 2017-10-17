@@ -501,7 +501,7 @@ $userFilter = "(&(objectClass=$USER_CLASS)(|$groupsToFilter))"
 # Get the LDAP users of the discovered RightScale groups
 try {
     Write-Log -Message "Getting all members of filtered LDAP groups..." -OutputToConsole
-    $rawUsers = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_USER_DN' '$userFilter' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
+    $rawUsers = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_USER_DN' '$userFilter' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
     if($lastexitcode -ne 0) {
         $ldapErrorMessage = "Error retrieving users from LDAP!"
         Write-Log "$ldapErrorMessage Error: $ldapUserLookupError" -OutputToConsole
@@ -641,7 +641,7 @@ foreach ($ldapGroup in $ldapGroups) {
                 $user_email = $ldapUsers | Where-Object { $_.dn -eq $member } | Select-Object -ExpandProperty email
                 $user_id = $rsGRSUsers | Where-Object { $_.email -eq $user_email } | Select-Object -ExpandProperty id
                 if($user_id -eq $null) {
-                    Write-Log -Message "Error retrieving $user_email RightScale ID. Skipping..." -OutputToConsole
+                    Write-Log -Message "Error retrieving RightScale ID for $member. Skipping..." -OutputToConsole
                 }
                 else {
                     Write-Log -Message "* Member: $user_email (RS ID: $user_id)" -OutputToConsole
