@@ -116,3 +116,6 @@ Example: /api/identity_providers/123
 `PURGE_USERS` : Set to 'true' to remove user affiliations from RightScale for users that are no longer members of an LDAP group.  
 Possible Values: true, false  
 Default Value: false
+
+## License
+The LDAP Group Sync source code is subject to the MIT license, see the [LICENSE](./LICENSE) file.
