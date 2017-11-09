@@ -3,7 +3,7 @@
 # RightScript Name: RightScale Group Sync
 # Description: >
 #   Synchronizes members of a LDAP directory service with RightScale Governance Groups.
-#   Requires: PowerShell Core, LDAPSEARCH
+#   Requires: PowerShell Core and LDAPSEARCH or Active Directory PowerShell Module
 #   If a group is managed by this script, you will be unable to manually add/remove users via Governance.
 # Inputs:
 #   COMPANY_NAME:
@@ -50,13 +50,13 @@
 #     Advanced: false
 #   LDAP_HOST:
 #     Category: LDAP
-#     Description: "Connection string for ldap host. Example: ldap://ldap.server:1389 or ldaps://ldap.server:1636"
+#     Description: "Connection string for ldap host. Example: ldap://ldap.acme.com:1389 or ldaps://ldap.acme.com:1636 or if using Active Directory Module, the FQDN of the desired DC, dc01.acme.com"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
 #   LDAP_USER:
 #     Category: LDAP
-#     Description: "User that has read access to the Directory Service. Example: cn=Directory Manager"
+#     Description: "User that has read access to the Directory Service. Example: 'cn=Directory Manager' or if using Active Directory Module 'domain\aduser'"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
@@ -68,7 +68,7 @@
 #     Advanced: false
 #   START_TLS:
 #     Category: LDAP
-#     Description: "Set to true to use StartTLS with ldapsearch command"
+#     Description: "Set to true to use StartTLS with ldapsearch command. Note: Ignored if using Active Directory Module"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
@@ -78,28 +78,32 @@
 #     Default: text:false
 #   BASE_GROUP_DN:
 #     Category: LDAP
-#     Description: "The base dn for groups in the Directory Service. Example: ou=Groups,DC=some,DC=domain"
+#     Description: "The base dn for groups in the Directory Service. Example: ou=Groups,DC=acme,DC=com"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:ou=Groups,DC=acme,DC=com"
 #   BASE_USER_DN:
 #     Category: LDAP
-#     Description: "The base dn for users in the Directory Service. Example: ou=Users,DC=some,DC=domain"
+#     Description: "The base dn for users in the Directory Service. Example: ou=Users,DC=acme,DC=com"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:ou=Users,DC=acme,DC=com"
 #   GROUP_CLASS:
 #     Category: LDAP
-#     Description: "The Directory Services Object Class for groups of users. Example: groupOfNames"
+#     Description: "The Directory Services Object Class for groups of users. Example: groupOfNames or group. Note: Ignored if using Active Directory Module"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:groupOfName"
 #   USER_CLASS:
 #     Category: LDAP
-#     Description: "The Directory Services Object Class for users. Example: person"
+#     Description: "The Directory Services Object Class for users. Example: person. Note: Ignored if using Active Directory Module"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:person"
 #   GROUP_SEARCH_STRING:
 #     Category: LDAP
 #     Description: "LDAP search string to use to filter groups to sync. Wildcard must be added if required. Example: RightScaleGroup*"
@@ -114,10 +118,11 @@
 #     Advanced: false
 #   PRINCIPAL_UID_ATTRIBUTE:
 #     Category: LDAP
-#     Description: "The name of the LDAP attribute to use for the RightScale principal_uid"
+#     Description: "The name of the LDAP attribute to use for the RightScale principal_uid. Example: entryUUID. Note: For Active Directory this value is ignored and the users SID is automatically used."
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:entryUUID"
 #   EMAIL_DOMAIN:
 #     Category: LDAP
 #     Description: "The email domain to filter RightScale users on. Example: email.com"
@@ -185,10 +190,7 @@ $errorActionPreference = 'stop'
 # to run every 15 minutes:
 # */15 * * * * /path/to/script/rightscale_group_sync.ps1
 
-
 # Define log file
-#$currentTime = (New-TimeSpan -Start (Get-Date -Date "01/01/1970") -End (Get-Date)).Ticks
-#$logFilePath = Join-Path "/tmp" "rs_groupsync_$currentTime.log"
 $logFilePath = "/tmp/rightscale_group_sync.log"
 
 # Delete log file if it already exists as history is saved in RS Audit Entires
@@ -360,6 +362,22 @@ function Remove-RSUser ($RSHost, $AccessToken, $GRSAccount, $UserID, $Email) {
 ## Main
 Write-Log -Message "Group Sync Starting..." -OutputToConsole
 
+# Look for Active Directory Module
+if(Get-Module -Name ActiveDirectory -ListAvailable) {
+    Write-Log "Found Active Directory PowerShell module!" -OutputToConsole
+    $useADModule = $true
+    $adSecurePassword = ConvertTo-SecureString $LDAP_USER_PASSWORD -AsPlainText -Force
+    $adCredential = New-Object System.Management.Automation.PSCredential $LDAP_USER,$adSecurePassword
+    $memberOfParameter = "memberOf"
+    $GROUP_CLASS = "group"
+    $USER_CLASS = "person"
+    $PRINCIPAL_UID_ATTRIBUTE = "SID"
+}
+else {
+    $useADModule = $false
+    $memberOfParameter = "isMemberOf"
+}
+
 # Look for config file and if exists, use to set parameters
 $parentPath = Split-Path -Parent $PSCommandPath
 $configFile = Join-Path -Path $parentPath -ChildPath "groupsync.config.ps1"
@@ -450,7 +468,7 @@ elseif ($LIST_OF_GROUPS -ne $null) {
     foreach ($group in $LIST_OF_GROUPS.Split(',')) {
         $groupsToFilter += "(cn=$group)"
     }
-    $groupsFilter = "(&(objectClass=$ENV:GROUP_CLASS)(|$groupsToFilter))"
+    $groupsFilter = "(&(objectClass=$GROUP_CLASS)(|$groupsToFilter))"
     Write-Log -Message "Getting all groups matching '$LIST_OF_GROUPS'..." -OutputToConsole
 }
 else {
@@ -463,8 +481,12 @@ else {
 
 # Get the LDAP groups
 try {
-    $rawGroups = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_GROUP_DN' '$groupsFilter' dn cn member" -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue) 2>&1
-
+    if($useADModule) {
+        $rawGroups = Get-ADGroup -LDAPFilter $groupsFilter -Credential $adCredential -SearchBase $BASE_GROUP_DN -Server $LDAP_HOST -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue
+    }
+    else {
+        $rawGroups = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_GROUP_DN' '$groupsFilter' dn cn member" -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue) 2>&1
+    }
     if($lastexitcode -ne 0) {
         $ldapErrorMessage = "Error retrieving groups from LDAP!"
         Write-Log "$ldapErrorMessage Error: $ldapGroupLookupError" -OutputToConsole
@@ -480,9 +502,11 @@ try {
         EXIT 1
     }
     else {
-        $rawGroups = $rawGroups | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
-        $rawGroups = $rawGroups | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
-        $rawGroups = $rawGroups -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
+        if (-not($useADModule)) {
+            $rawGroups = $rawGroups | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
+            $rawGroups = $rawGroups | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
+            $rawGroups = $rawGroups -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
+        }
     }
 }
 catch {
@@ -496,11 +520,21 @@ catch {
 # Create LDAP groups object
 $ldapGroups = @()
 foreach ($group in $rawGroups) {
-    $object = New-Object -TypeName PSObject
-    $object | Add-Member -MemberType NoteProperty -Name dn -Value $($group -split '\n' -match '^dn:' -replace 'dn:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name cn -Value $($group -split '\n' -match '^cn:' -replace 'cn:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name members -Value ($group -split '\n' -match '^member:' -replace 'member:\s','')
-    $ldapGroups += $object
+    if($useADModule) {
+        $groupMembers = $group | Get-ADGroupMember -Credential $adCredential -Server $LDAP_HOST | Select-Object -ExpandProperty distinguishedName
+        $object = New-Object -TypeName PSObject
+        $object | Add-Member -MemberType NoteProperty -Name dn -Value $group.DistinguishedName
+        $object | Add-Member -MemberType NoteProperty -Name cn -Value $group.Name
+        $object | Add-Member -MemberType NoteProperty -Name members -Value $groupMembers
+        $ldapGroups += $object
+    }
+    else {
+        $object = New-Object -TypeName PSObject
+        $object | Add-Member -MemberType NoteProperty -Name dn -Value $($group -split '\n' -match '^dn:' -replace 'dn:\s','')
+        $object | Add-Member -MemberType NoteProperty -Name cn -Value $($group -split '\n' -match '^cn:' -replace 'cn:\s','')
+        $object | Add-Member -MemberType NoteProperty -Name members -Value ($group -split '\n' -match '^member:' -replace 'member:\s','')
+        $ldapGroups += $object
+    }
 }
 Write-Log -Message "$($ldapGroups.Count) LDAP Group(s) found." -OutputToConsole
  
@@ -508,14 +542,22 @@ Write-Log -Message "$($ldapGroups.Count) LDAP Group(s) found." -OutputToConsole
 # Potentially expensive query, alternative is to do a single search per user dn, or get all LDAP users and do a client side filter
 $groupsToFilter = $null
 foreach ($group in $ldapGroups.dn) {
-    $groupsToFilter += "(isMemberOf=$group)"
+    $groupsToFilter += "($memberOfParameter=$group)"
 }
 $userFilter = "(&(objectClass=$USER_CLASS)(|$groupsToFilter))"
 
 # Get the LDAP users of the discovered RightScale groups
 try {
     Write-Log -Message "Getting all members of filtered LDAP groups..." -OutputToConsole
-    $rawUsers = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_USER_DN' '$userFilter' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
+    if($useADModule){
+        $rawUsers = Get-ADUser -LDAPFilter $userFilter -Credential $adCredential -Property 'surname','givenName','mail','telephoneNumber',$PRINCIPAL_UID_ATTRIBUTE,'objectClass' -SearchBase $BASE_USER_DN -Server $LDAP_HOST -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue
+    }
+    else {
+        $rawUsers = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_USER_DN' '$userFilter' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
+        $rawUsers = $rawUsers | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
+        $rawUsers = $rawUsers | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
+        $rawUsers = $rawUsers -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
+    }
     if($lastexitcode -ne 0) {
         $ldapErrorMessage = "Error retrieving users from LDAP!"
         Write-Log "$ldapErrorMessage Error: $ldapUserLookupError" -OutputToConsole
@@ -530,11 +572,6 @@ try {
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
         EXIT 1
     }
-    else {
-        $rawUsers = $rawUsers | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
-        $rawUsers = $rawUsers | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
-        $rawUsers = $rawUsers -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
-    }
 }
 catch {
     $ldapErrorMessage = "Error retrieving users from LDAP!"
@@ -547,19 +584,36 @@ catch {
 # Create LDAP users object
 $ldapUsers = @()
 foreach ($user in $rawUsers) {
-    $phoneNumber = $null
-    $object = New-Object -TypeName PSObject
-    $object | Add-Member -MemberType NoteProperty -Name dn -Value $($user -split '\n' -match '^dn:' -replace 'dn:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name sn -Value $($user -split '\n' -match '^sn:' -replace 'sn:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name givenName -Value $($user -split '\n' -match '^givenName:' -replace 'givenName:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name email -Value $($user -split '\n' -match '^mail:' -replace 'mail:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value  $($user -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
-    $phoneNumber = $($user -split '\n' -match '^telephoneNumber:' -replace 'telephoneNumber:\s','')
-    if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
-        $phoneNumber = $DEFAULT_PHONE_NUMBER
+    if($useADModule) {
+        $phoneNumber = $null
+        $object = New-Object -TypeName PSObject
+        $object | Add-Member -MemberType NoteProperty -Name dn -Value $user.DistinguishedName
+        $object | Add-Member -MemberType NoteProperty -Name sn -Value $user.surname
+        $object | Add-Member -MemberType NoteProperty -Name givenName -Value $user.givenName
+        $object | Add-Member -MemberType NoteProperty -Name email -Value $user.mail
+        $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value $user.SID.Value
+        $phoneNumber = $user.telephoneNumber
+        if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
+            $phoneNumber = $DEFAULT_PHONE_NUMBER
+        }
+        $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
+        $ldapUsers += $object
     }
-    $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
-    $ldapUsers += $object
+    else {
+        $phoneNumber = $null
+        $object = New-Object -TypeName PSObject
+        $object | Add-Member -MemberType NoteProperty -Name dn -Value $($user -split '\n' -match '^dn:' -replace 'dn:\s','')
+        $object | Add-Member -MemberType NoteProperty -Name sn -Value $($user -split '\n' -match '^sn:' -replace 'sn:\s','')
+        $object | Add-Member -MemberType NoteProperty -Name givenName -Value $($user -split '\n' -match '^givenName:' -replace 'givenName:\s','')
+        $object | Add-Member -MemberType NoteProperty -Name email -Value $($user -split '\n' -match '^mail:' -replace 'mail:\s','')
+        $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value $($user -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
+        $phoneNumber = $($user -split '\n' -match '^telephoneNumber:' -replace 'telephoneNumber:\s','')
+        if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
+            $phoneNumber = $DEFAULT_PHONE_NUMBER
+        }
+        $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
+        $ldapUsers += $object
+    }
 }
 Write-Log -Message "$($ldapUsers.Count) LDAP User(s) found." -OutputToConsole
 

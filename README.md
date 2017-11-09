@@ -1,13 +1,17 @@
 # RightScale LDAP Group Sync Tool
 
-This group sync script is designed to sync groups from an LDAP provider to RightScale Governance.
-It uses ldapsearch(Part of [openldap](https://www.openldap.org/software/download/) tools) and [PowerShell core](https://github.com/PowerShell/PowerShell).
+This group sync script is designed to sync groups from an LDAP provider, or Active Directory, to RightScale Governance.
+It uses [PowerShell core](https://github.com/PowerShell/PowerShell) and ldapsearch(Part of [openldap](https://www.openldap.org/software/download/) tools) or [Active Directory PowerShell Module](https://technet.microsoft.com/en-us/library/ee617195.aspx).
 
 ## Important Considerations
 1. The tool will not follow memberships for nested groups. Users must be direct members of the LDAP groups to be synchronized.
 1. Groups must already exist in RightScale with the proper roles assigned. This tool will not create groups.
 1. Once a group is managed by this tool, you will no longer be able to manually make modifications to its members in RightScale Governance. Any changes you make to the group in Governance will be removed once the next group sync is run. Manage the group in your directory service
 1. The time it takes to do a full sync is directly related to the number of groups and users you are synchronizing. We recommend running it a few times manually to get a good baseline before scheduling it to run on a reoccurring basis. Remember to add a buffer to the schedule to account for latency and additional users and groups that may be added in the future.
+
+## Active Directory
+If the Active Directory PowerShell module is installed on the server running the script, the values of some parameters will automatically be overridden.  
+Read the parameter details carefully below.  
 
 ## How It Works
 1. The tool gathers groups from an LDAP directory service based on either a list of groups, or a search string.  
@@ -52,34 +56,40 @@ $PURGE_USERS = "true"
 ```
 
 ## Script Parameters
-`LDAP_HOST` : Connection string for LDAP host.  
+`LDAP_HOST` : Connection string for LDAP host. 
 ldap:// for non-secure and ldaps:// for secure.  
 Port number can optionally bet set at the end if using a non-standard port for ldap(389) or ldaps(636).  
-Example: ldap://ldap.acme.com:1389 or ldaps://ldap.acme.com:1636
+Example LDAP: ldap://ldap.acme.com:1389 or ldaps://ldap.acme.com:1636
+Example AD: The FQDN of the DC you would like to use, dc01.acme.com
 
-`START_TLS` : Set to true to use StartTLS when connecting to your LDAP server.  
+`START_TLS` : Set to true to use StartTLS when connecting to your LDAP server.
+Note: Ignored for Active Directory. Authentication is negotiated by default.
 Possible Values: true, false  
 Default Value: false
 
 `LDAP_USER` : User to bind to the Directory Service as.  
-Example: cn=Directory Manager
+Example LDAP: cn=Directory Manager 
+Example AD: domain\aduser
 
-`LDAP_USER_PASSWORD` : Password for the LDAP_USER bind account.  
+`LDAP_USER_PASSWORD` : Password for the LDAP_USER account.  
 
 `BASE_GROUP_DN` : The base dn for groups in the Directory Service.  
 Example: ou=Groups,DC=acme,DC=com
 
-`BASE_USER_DN` : The base dn for users in the Directory Service.  
+`BASE_USER_DN` : The base dn for users in the Directory Service. 
 Example: ou=Users,DC=acme,DC=com
 
-`GROUP_CLASS` : The Directory Services Object Class for groups of users.   
-Example: groupOfNames
+`GROUP_CLASS` : The Directory Services Object Class for groups of users.
+Note: Ignored for Active Directory. 'Group' is automatically used. 
+Example: groupOfNames or group
 
-`USER_CLASS` : The Directory Services Object Class for users.  
+`USER_CLASS` : The Directory Services Object Class for users.
+Note: Ignored for Active Directory. 'Person' is automatically used.
 Example: person
 
 `PRINCIPAL_UID_ATTRIBUTE` : The name of the LDAP attribute to use for the RightScale principal_uid.  
-Example: entryUUID
+Note: Ignored for Active Directory. SID is automatically used.
+Example: entryUUID or objectSid
 
 `GROUP_SEARCH_STRING` : LDAP search string used to filter groups to sync. Wildcard use is supported.  
 Example: RightScaleGroup*  
