@@ -360,14 +360,12 @@ if(Get-Module -Name ActiveDirectory -ListAvailable) {
     $useADModule = $true
     $adSecurePassword = ConvertTo-SecureString $LDAP_USER_PASSWORD -AsPlainText -Force
     $adCredential = New-Object System.Management.Automation.PSCredential $LDAP_USER,$adSecurePassword
-    $memberOfParameter = "memberOf"
     $GROUP_CLASS = "group"
     $USER_CLASS = "person"
-    $PRINCIPAL_UID_ATTRIBUTE = "SID"
+    $PRINCIPAL_UID_ATTRIBUTE = "objectSID"
 }
 else {
     $useADModule = $false
-    $memberOfParameter = "isMemberOf"
 }
 
 # Look for config file and if exists, use to set parameters
@@ -473,15 +471,32 @@ else {
 
 # Get the LDAP groups
 try {
+    $ldapGroups = @()
     if($useADModule) {
         $rawGroups = Get-ADGroup -LDAPFilter $groupsFilter -Credential $adCredential -SearchBase $BASE_GROUP_DN -Server $LDAP_HOST -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue
+        foreach ($group in $rawGroups) {
+            $groupMembers = $group | Get-ADGroupMember -Credential $adCredential -Server $LDAP_HOST | Select-Object -ExpandProperty distinguishedName
+            $object = New-Object -TypeName PSObject
+            $object | Add-Member -MemberType NoteProperty -Name dn -Value $group.DistinguishedName
+            $object | Add-Member -MemberType NoteProperty -Name cn -Value $group.Name
+            $object | Add-Member -MemberType NoteProperty -Name members -Value $groupMembers
+            $ldapGroups += $object
+        }
     }
     else {
         $rawGroups = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_GROUP_DN' '$groupsFilter' dn cn member" -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue) 2>&1
         $rawGroups = $rawGroups | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
         $rawGroups = $rawGroups | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
         $rawGroups = $rawGroups -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
+        foreach ($group in $rawGroups) {
+            $object = New-Object -TypeName PSObject
+            $object | Add-Member -MemberType NoteProperty -Name dn -Value $($group -split '\n' -match '^dn:' -replace 'dn:\s','')
+            $object | Add-Member -MemberType NoteProperty -Name cn -Value $($group -split '\n' -match '^cn:' -replace 'cn:\s','')
+            $object | Add-Member -MemberType NoteProperty -Name members -Value ($group -split '\n' -match '^member:' -replace 'member:\s','')
+            $ldapGroups += $object
+        }
     }
+
     if($lastexitcode -ne 0) {
         $ldapErrorMessage = "Error retrieving groups from LDAP!"
         Write-Log "$ldapErrorMessage Error: $ldapGroupLookupError" -OutputToConsole
@@ -504,26 +519,6 @@ catch {
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
     EXIT 1
 }
-
-# Create LDAP groups object
-$ldapGroups = @()
-foreach ($group in $rawGroups) {
-    if($useADModule) {
-        $groupMembers = $group | Get-ADGroupMember -Credential $adCredential -Server $LDAP_HOST | Select-Object -ExpandProperty distinguishedName
-        $object = New-Object -TypeName PSObject
-        $object | Add-Member -MemberType NoteProperty -Name dn -Value $group.DistinguishedName
-        $object | Add-Member -MemberType NoteProperty -Name cn -Value $group.Name
-        $object | Add-Member -MemberType NoteProperty -Name members -Value $groupMembers
-        $ldapGroups += $object
-    }
-    else {
-        $object = New-Object -TypeName PSObject
-        $object | Add-Member -MemberType NoteProperty -Name dn -Value $($group -split '\n' -match '^dn:' -replace 'dn:\s','')
-        $object | Add-Member -MemberType NoteProperty -Name cn -Value $($group -split '\n' -match '^cn:' -replace 'cn:\s','')
-        $object | Add-Member -MemberType NoteProperty -Name members -Value ($group -split '\n' -match '^member:' -replace 'member:\s','')
-        $ldapGroups += $object
-    }
-}
 Write-Log -Message "$($ldapGroups.Count) LDAP Group(s) found." -OutputToConsole
 
 # Collect only users of the discovered RightScale groups - single LDAP query per user
@@ -533,8 +528,26 @@ foreach ($ldapUser in $allLDAPRSUsers) {
     try {
         Write-Log -Message "Getting user details for '$ldapUser'..." -OutputToConsole
         if($useADModule) {
-            $rawUser = Get-ADUser -Identity $ldapUser -Credential $adCredential -Property 'surname','givenName','mail','telephoneNumber',$PRINCIPAL_UID_ATTRIBUTE,'objectClass' -Server $LDAP_HOST -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue
+            $rawUser = Get-ADObject -Identity $ldapUser -Credential $adCredential -Properties 'surname','givenName','mail','telephoneNumber',$PRINCIPAL_UID_ATTRIBUTE,'objectClass' -Server $LDAP_HOST -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue
             $objectClass = $rawUser.objectClass
+            if($objectClass -contains $USER_CLASS) {
+                $phoneNumber = $null
+                $object = New-Object -TypeName PSObject
+                $object | Add-Member -MemberType NoteProperty -Name dn -Value $user.DistinguishedName
+                $object | Add-Member -MemberType NoteProperty -Name sn -Value $user.surname
+                $object | Add-Member -MemberType NoteProperty -Name givenName -Value $user.givenName
+                $object | Add-Member -MemberType NoteProperty -Name email -Value $user.mail
+                $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value $user.objectSID.Value
+                $phoneNumber = $user.telephoneNumber
+                if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
+                    $phoneNumber = $DEFAULT_PHONE_NUMBER
+                }
+                $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
+                $ldapUsers += $object
+            }
+            else {
+                Write-Log -Message "Object: $ldapUser is not of objectClass $USER_CLASS! objectClass(es): $($objectClass -join ', ')" -OutputToConsole
+            }
         }
         else {
             $rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
@@ -542,7 +555,26 @@ foreach ($ldapUser in $allLDAPRSUsers) {
             $rawUser = $rawUser | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
             $rawUser = $rawUser -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
             $objectClass = $($rawUser -split '\n' -match '^objectClass:' -replace 'objectClass:\s','')
+            if($objectClass -contains $USER_CLASS) {
+                $phoneNumber = $null
+                $object = New-Object -TypeName PSObject
+                $object | Add-Member -MemberType NoteProperty -Name dn -Value $($rawUser -split '\n' -match '^dn:' -replace 'dn:\s','')
+                $object | Add-Member -MemberType NoteProperty -Name sn -Value $($rawUser -split '\n' -match '^sn:' -replace 'sn:\s','')
+                $object | Add-Member -MemberType NoteProperty -Name givenName -Value $($rawUser -split '\n' -match '^givenName:' -replace 'givenName:\s','')
+                $object | Add-Member -MemberType NoteProperty -Name email -Value $($rawUser -split '\n' -match '^mail:' -replace 'mail:\s','')
+                $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value  $($rawUser -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
+                $phoneNumber = $($rawUser -split '\n' -match '^telephoneNumber:' -replace 'telephoneNumber:\s','')
+                if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
+                    $phoneNumber = $DEFAULT_PHONE_NUMBER
+                }
+                $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
+                $ldapUsers += $object
+            }
+            else {
+                Write-Log -Message "Object: $ldapUser is not of objectClass $USER_CLASS! objectClass(es): $($objectClass -join ', ')" -OutputToConsole
+            }
         }
+
         if($lastexitcode -ne 0) {
             $ldapErrorMessage = "Error retrieving user details from LDAP!"
             Write-Log "$ldapErrorMessage Error: $ldapUserLookupError" -OutputToConsole
@@ -556,44 +588,6 @@ foreach ($ldapUser in $allLDAPRSUsers) {
             New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail "User not found: $ldapUser"
             New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
             EXIT 1
-        }
-        else {
-            if($objectClass -contains $USER_CLASS) {
-                if($useADModule) {
-                    $phoneNumber = $null
-                    $object = New-Object -TypeName PSObject
-                    $object | Add-Member -MemberType NoteProperty -Name dn -Value $user.DistinguishedName
-                    $object | Add-Member -MemberType NoteProperty -Name sn -Value $user.surname
-                    $object | Add-Member -MemberType NoteProperty -Name givenName -Value $user.givenName
-                    $object | Add-Member -MemberType NoteProperty -Name email -Value $user.mail
-                    $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value $user.SID.Value
-                    $phoneNumber = $user.telephoneNumber
-                    if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
-                        $phoneNumber = $DEFAULT_PHONE_NUMBER
-                    }
-                    $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
-                    $ldapUsers += $object
-                }
-                else {
-                    $phoneNumber = $null
-                    $object = New-Object -TypeName PSObject
-                    $object | Add-Member -MemberType NoteProperty -Name dn -Value $($rawUser -split '\n' -match '^dn:' -replace 'dn:\s','')
-                    $object | Add-Member -MemberType NoteProperty -Name sn -Value $($rawUser -split '\n' -match '^sn:' -replace 'sn:\s','')
-                    $object | Add-Member -MemberType NoteProperty -Name givenName -Value $($rawUser -split '\n' -match '^givenName:' -replace 'givenName:\s','')
-                    $object | Add-Member -MemberType NoteProperty -Name email -Value $($rawUser -split '\n' -match '^mail:' -replace 'mail:\s','')
-                    $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value  $($rawUser -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
-                    $phoneNumber = $($rawUser -split '\n' -match '^telephoneNumber:' -replace 'telephoneNumber:\s','')
-                    if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
-                        $phoneNumber = $DEFAULT_PHONE_NUMBER
-                    }
-                    $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
-                    $ldapUsers += $object
-                }
-            }
-            else {
-                Write-Log -Message "Object: $ldapUser is not of objectClass $USER_CLASS! objectClass(es): $($objectClass -join ', ')" -OutputToConsole
-            }
-            
         }
     }
     catch {
