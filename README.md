@@ -32,7 +32,7 @@ It uses native PowerShell on Windows or [PowerShell core](https://github.com/Pow
 
 ## Script Differences
 **RightScale_Group_Sync-PerUserLookup.ps1** - Performs a single LDAP query per user to collect details.  
-**RightScale_Group_Sync-PerGroupLookup.ps1** - Performs an LDAP query using a filter of `isMemberOf` scoped to the discovered groups.
+**RightScale_Group_Sync-PerGroupLookup.ps1** - Performs an LDAP query using a filter of `isMemberOf`, or `memberOf` for Active Directory, scoped to the discovered groups.
 
 ## Parameter Includes File
 As opposed to passing all the parameters in during script execution, you can optionally create a file called `groupsync.config.ps1` in the same path as the group sync script and set some or all of the parameters there.
@@ -90,6 +90,8 @@ $PURGE_USERS = "true"
 ```
 
 ## Script Parameters
+All parameters are required unless otherwise noted:  
+
 `LDAP_HOST` ** : Connection string for LDAP host or FQDN of a Domain Controller for Active Directory.  
 ldap:// for non-secure and ldaps:// for secure.  
 Port number can optionally bet set at the end if using a non-standard port for ldap(389) or ldaps(636).  
@@ -110,7 +112,8 @@ Port number can optionally bet set at the end if using a non-standard port for l
 `BASE_GROUP_DN` : The base dn for groups in the Directory Service.  
 **Example:** ou=Groups,DC=acme,DC=com
 
-`BASE_USER_DN` : The base dn for users in the Directory Service. 
+`BASE_USER_DN` : The base dn for users in the Directory Service.
+**Note:** The `BASE_USER_DN` variable is not used with the "Per User Lookup" script: _RightScale_Group_Sync-PerUserLookup.ps1_
 **Example:** ou=Users,DC=acme,DC=com
 
 `GROUP_CLASS` ** : The Directory Services Object Class for groups of users.  
@@ -119,7 +122,6 @@ Port number can optionally bet set at the end if using a non-standard port for l
 
 `USER_CLASS` ** : The Directory Services Object Class for users.  
 **Note:** Ignored for Active Directory module. 'person' is automatically used.  
-**Note:** The `USER_CLASS` variable is not used with the "Per User Lookup" script: _RightScale_Group_Sync-PerUserLookup.ps1_
 **Example:** person
 
 `PRINCIPAL_UID_ATTRIBUTE` ** : The name of the LDAP attribute to use for the RightScale principal_uid.  
@@ -140,11 +142,11 @@ Recommend setting to the main company phone number.
 **Example: 111-555-1212**
 
 `CM_SSO_ACCOUNT` : The RightScale account number the Single Sign-On(SSO) Identity Provider(IDP) is configured under.  
-**Reference:** Can be retrieved from the URL of the SSO screen: https://us-3.rightscale.com/global/enterprises/**54321**/sso  
+**Reference:** Can be retrieved from the URL of the SSO configuration screen in RightScale Cloud Management: ht&#8203;tps://us-3.rightscale.com/global/enterprises/**54321**/sso  
 **Example:** 12345
 
 `GRS_ACCOUNT` : The account number for the RightScale Organization.  
-**Reference:** Can be retrieved from the RightScale Governance URL: ht<span>tps://</span>governance.rightscale.com/org/**12345**/accounts/54321/users
+**Reference:** Can be retrieved from the RightScale Governance URL: ht&#8203;tps://governance.rightscale.com/org/**12345**/accounts/54321/users  
 **Example:** 12345
 
 `RS_HOST` : The RightScale host.  
@@ -155,7 +157,7 @@ Used to create new users, add affiliations to the organization, remove affiliati
 **Reference:** [RightScale Docs - Enable OAuth](http://docs.rightscale.com/cm/dashboard/settings/account/enable_oauth)  
 
 `IDP_HREF` : The href of the IdP associated with the users of the Groups.  
-**Reference:** Can be retrieved by copying the link to edit your SSO: ht<span>tps://</span>us-3.rightscale.com/global/enterprises/54321/edit_sso?identity_provider_id=**123** and grabbing the ID value at the end -or via the [RightScale Cloud Management API](http://reference.rightscale.com/api1.5/resources/ResourceIdentityProviders.html#index)  
+**Reference:** Can be retrieved by copying the link to edit your SSO: ht&#8203;tps://us-3.rightscale.com/global/enterprises/54321/edit_sso?identity_provider_id=**123** and grabbing the ID value at the end -or via the [RightScale Cloud Management API](http://reference.rightscale.com/api1.5/resources/ResourceIdentityProviders.html#index)  
 **Example:** /api/identity_providers/123
 
 `PURGE_USERS` : Set to 'true' to remove user affiliations from RightScale for users that are no longer members of an LDAP group.  
