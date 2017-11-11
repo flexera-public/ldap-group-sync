@@ -144,7 +144,7 @@ Recommend setting to the main company phone number.
 **Example:** 12345
 
 `GRS_ACCOUNT` : The account number for the RightScale Organization.  
-**Reference:** Can be retrieved from the RightScale Governance URL: https://governance.rightscale.com/org/**12345**/accounts/54321/users
+**Reference:** Can be retrieved from the RightScale Governance URL: ht<span>tps://</span>governance.rightscale.com/org/**12345**/accounts/54321/users
 **Example:** 12345
 
 `RS_HOST` : The RightScale host.  
@@ -155,7 +155,7 @@ Used to create new users, add affiliations to the organization, remove affiliati
 **Reference:** [RightScale Docs - Enable OAuth](http://docs.rightscale.com/cm/dashboard/settings/account/enable_oauth)  
 
 `IDP_HREF` : The href of the IdP associated with the users of the Groups.  
-**Reference:** Can be retrieved by copying the link to edit your SSO: https://us-3.rightscale.com/global/enterprises/54321/edit_sso?identity_provider_id=**573** -or via the [RightScale Cloud Management API](http://reference.rightscale.com/api1.5/resources/ResourceIdentityProviders.html#index)  
+**Reference:** Can be retrieved by copying the link to edit your SSO: ht<span>tps://</span>us-3.rightscale.com/global/enterprises/54321/edit_sso?identity_provider_id=**123** and grabbing the ID value at the end -or via the [RightScale Cloud Management API](http://reference.rightscale.com/api1.5/resources/ResourceIdentityProviders.html#index)  
 **Example:** /api/identity_providers/123
 
 `PURGE_USERS` : Set to 'true' to remove user affiliations from RightScale for users that are no longer members of an LDAP group.  
