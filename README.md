@@ -90,14 +90,14 @@ $PURGE_USERS = "true"
 ```
 
 ## Script Parameters
-`LDAP_HOST` ** : Connection string for LDAP host or FQDN of a Domain Controller for Active Directory. 
+`LDAP_HOST` ** : Connection string for LDAP host or FQDN of a Domain Controller for Active Directory.  
 ldap:// for non-secure and ldaps:// for secure.  
 Port number can optionally bet set at the end if using a non-standard port for ldap(389) or ldaps(636).  
 **Example for LDAP:** ldap://ldap.acme.com:1389 or ldaps://ldap.acme.com:1636  
 ****Example for AD:** The FQDN of the DC you would like to use, dc01.acme.com
 
 `START_TLS` : Set to true to use StartTLS when connecting to your LDAP server.  
-**Note:** Ignored for Active Directory module. Authentication is negotiated by default.  
+****Note:** Ignored for Active Directory module. Authentication is negotiated by default.  
 **Possible Values:** true, false  
 **Default Value:** false
 
@@ -140,20 +140,23 @@ Recommend setting to the main company phone number.
 **Example: 111-555-1212**
 
 `CM_SSO_ACCOUNT` : The RightScale account number the Single Sign-On(SSO) Identity Provider(IDP) is configured under.  
+**Reference:** Can be retrieved from the URL of the SSO screen: https://us-3.rightscale.com/global/enterprises/**54321**/sso  
 **Example:** 12345
 
 `GRS_ACCOUNT` : The account number for the RightScale Organization.  
+**Reference:** Can be retrieved from the RightScale Governance URL: https://governance.rightscale.com/org/**12345**/accounts/54321/users
 **Example:** 12345
 
 `RS_HOST` : The RightScale host.  
 **Example:** us-3.rightscale.com or us-4.rightscale.com
 
 `REFRESH_TOKEN` : Refresh token for a RightScale user account that has the Enterprise Manager role.  
-Used to create new users, add affiliations to the organization, remove affiliations to the organization, and modify group memberships.
-**Reference:** 
+Used to create new users, add affiliations to the organization, remove affiliations to the organization, and modify group memberships.  
+**Reference:** [RightScale Docs - Enable OAuth](http://docs.rightscale.com/cm/dashboard/settings/account/enable_oauth)  
 
 `IDP_HREF` : The href of the IdP associated with the users of the Groups.  
-Example: /api/identity_providers/123
+**Reference:** Can be retrieved by copying the link to edit your SSO: https://us-3.rightscale.com/global/enterprises/54321/edit_sso?identity_provider_id=**573** -or via the [RightScale Cloud Management API](http://reference.rightscale.com/api1.5/resources/ResourceIdentityProviders.html#index)  
+**Example:** /api/identity_providers/123
 
 `PURGE_USERS` : Set to 'true' to remove user affiliations from RightScale for users that are no longer members of an LDAP group.  
 **Possible Values:** true, false  
