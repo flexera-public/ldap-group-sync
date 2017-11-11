@@ -9,7 +9,7 @@ It uses native PowerShell on Windows or [PowerShell core](https://github.com/Pow
    * Linux: [https://www.openldap.org/software/download/](https://www.openldap.org/software/download/)
    * Windows: [https://www.userbooster.de/en/download/openldap-for-windows.aspx](https://www.userbooster.de/en/download/openldap-for-windows.aspx)
      * Ensure you add the **ClientTools** directory to your `PATH`
-1. For Active Directory, the Active Directory PowerShell module is required.
+1. For Active Directory, installation of the Active Directory PowerShell module is recommended.
 
 ## Important Considerations
 1. The tool will not follow memberships for nested groups. Users must be direct members of the LDAP groups to be synchronized.
