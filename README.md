@@ -157,7 +157,7 @@ Recommend setting to the main company phone number.
 `CM_SSO_ACCOUNT`  
 The RightScale account number the Single Sign-On(SSO) Identity Provider(IDP) is configured under.  
 **Reference:** Can be retrieved from the URL of the SSO configuration screen in RightScale Cloud Management: ht&#8203;tps://us-3.rightscale.com/global/enterprises/**54321**/sso  
-**Example:** 12345
+**Example:** 54321
 
 `GRS_ACCOUNT`  
 The account number for the RightScale Organization.  
