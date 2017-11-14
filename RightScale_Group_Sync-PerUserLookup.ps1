@@ -1,10 +1,10 @@
 #!/usr/bin/env powershell
 # ---
-# RightScript Name: RightScale Group Sync
+# RightScript Name: RightScale Group Sync - Per User Lookup
 # Description: >
 #   Synchronizes members of a LDAP directory service with RightScale Governance Groups.
-#   Requires: PowerShell Core, LDAPSEARCH
-#   If a group is managed by this script, you will be unable to manually add/remove users via Governance.
+#   Requires: PowerShell Core and LDAPSEARCH or Active Directory PowerShell Module
+#   If a group is managed by this script, you will be unable to manually add/remove users via RightScale Governance.
 # Inputs:
 #   COMPANY_NAME:
 #     Category: RIGHTSCALE
@@ -50,13 +50,13 @@
 #     Advanced: false
 #   LDAP_HOST:
 #     Category: LDAP
-#     Description: "Connection string for ldap host. Example: ldap://ldap.server:1389 or ldaps://ldap.server:1636"
+#     Description: "Connection string for ldap host. Example: ldap://ldap.acme.com:1389 or ldaps://ldap.acme.com:1636 or if using Active Directory Module, the FQDN of the desired DC, dc01.acme.com"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
 #   LDAP_USER:
 #     Category: LDAP
-#     Description: "User that has read access to the Directory Service. Example: cn=Directory Manager"
+#     Description: "User that has read access to the Directory Service. Example: 'cn=Directory Manager' or if using Active Directory Module 'domain\aduser'"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
@@ -68,7 +68,7 @@
 #     Advanced: false
 #   START_TLS:
 #     Category: LDAP
-#     Description: "Set to true to use StartTLS with ldapsearch command"
+#     Description: "Set to true to use StartTLS with ldapsearch command. Note: Ignored if using Active Directory Module"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
@@ -78,40 +78,38 @@
 #     Default: text:false
 #   BASE_GROUP_DN:
 #     Category: LDAP
-#     Description: "The base dn for groups in the Directory Service. Example: ou=Groups,DC=some,DC=domain"
+#     Description: "The base dn for groups in the Directory Service. Example: ou=Groups,DC=acme,DC=com"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:ou=Groups,DC=acme,DC=com"
 #   GROUP_CLASS:
 #     Category: LDAP
-#     Description: "The Directory Services Object Class for groups of users. Example: groupOfNames"
+#     Description: "The Directory Services Object Class for groups of users. Example: groupOfNames or group. Note: Ignored if using Active Directory Module"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:groupOfName"
 #   USER_CLASS:
 #     Category: LDAP
-#     Description: "The Directory Services Object Class for users. Example: person"
+#     Description: "The Directory Services Object Class for users. Example: person. Note: Ignored if using Active Directory Module"
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:person"
 #   GROUP_SEARCH_STRING:
 #     Category: LDAP
-#     Description: "LDAP search string to use to filter groups to sync. Wildcard must be added if required. Example: RightScaleGroup*"
-#     Input Type: single
-#     Required: false
-#     Advanced: false
-#   LIST_OF_GROUPS:
-#     Category: LDAP
-#     Description: "Comma separated list of Groups to sync. Example: RightScale_Admins,RightScale_Observers"
+#     Description: "Comma separated list of Groups to sync. Wildcards are supported. Example: RightScaleGroup_*,RS_Account_Admins"
 #     Input Type: single
 #     Required: false
 #     Advanced: false
 #   PRINCIPAL_UID_ATTRIBUTE:
 #     Category: LDAP
-#     Description: "The name of the LDAP attribute to use for the RightScale principal_uid"
+#     Description: "The name of the LDAP attribute to use for the RightScale principal_uid. Example: entryUUID. Note: For Active Directory this value is ignored and the users SID is automatically used."
 #     Input Type: single
 #     Required: true
 #     Advanced: false
+#     Default: "text:entryUUID"
 #   EMAIL_DOMAIN:
 #     Category: LDAP
 #     Description: "The email domain to filter RightScale users on. Example: email.com"
@@ -162,7 +160,6 @@ param(
     $GROUP_CLASS = $ENV:GROUP_CLASS, # The Directory Services Object Class for groups of users. Example: groupOfNames
     $USER_CLASS = $ENV:USER_CLASS, # The Directory Services Object Class for users. Example: person
     $GROUP_SEARCH_STRING = $ENV:GROUP_SEARCH_STRING, # LDAP search string to use to filter groups to sync. Wildcard must be added if required. Example: RightScaleGroup*
-    $LIST_OF_GROUPS = $ENV:LIST_OF_GROUPS, # Comma separated list of Groups to sync. Example: RightScale_Admins,RightScale_Observers
     $PRINCIPAL_UID_ATTRIBUTE = $ENV:PRINCIPAL_UID_ATTRIBUTE, # The name of the LDAP attribute to use for the RightScale principal_uid
     $EMAIL_DOMAIN = $ENV:EMAIL_DOMAIN, # The email domain to filter RightScale users on. Example: email.com
     $PURGE_USERS = $ENV:PURGE_USERS # Set to 'true' to remove user affiliations from RightScale that are no longer members of an LDAP group
@@ -189,7 +186,7 @@ if(Test-Path $logFilePath) {
 ## Functions
 function Write-Log ($Message, [switch]$OutputToConsole) {
     if(-not(Test-Path -Path $logFilePath)) {
-        New-Item -Path $logFilePath -ItemType "File" > $null
+        New-Item -Path $logFilePath -ItemType "File" -Force > $null
     }
     
     $currentTime = Get-Date -Format "dd-MM-yyyy HH:mm:ss z"
@@ -273,8 +270,9 @@ function New-RSUser ($RSHost, $AccessToken, $GRSAccount, $Email, $FirstName, $La
         }
     }
     catch {
-        Write-Log -Message "Error creating $Email! $($_ | Out-String)" -OutputToConsole
-        New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Error creating user: $Email!" -Detail ($_ | Out-String)
+        Write-Log -Message "Error creating new RightScale user: $Email! $($_ | Out-String)" -OutputToConsole
+        New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Error creating new RightScale user: $Email!" -Detail ($_ | Out-String)
+        RETURN $false
     }
 }
 
@@ -329,20 +327,23 @@ function Remove-RSUser ($RSHost, $AccessToken, $GRSAccount, $UserID, $Email) {
             "Authorization"="Bearer $AccessToken"
         }
         
-        $deleteResult = Invoke-WebRequest -UseBasicParsing -Uri "https://$RSHost/grs/orgs/$GRSAccount/users/$UserID" -Method Delete -Headers $grsHeader -ContentType $contentType
+        $deleteResult = Invoke-WebRequest -UseBasicParsing -Uri "https://$RSHost/grs/orgs/$GRSAccount/users/$UserID" -Method Delete -Headers $grsHeader -ContentType $contentType -ErrorAction SilentlyContinue -ErrorVariable deleteResultVariable
 
         if ($deleteResult.StatusCode -eq 204) {
             Write-Log -Message "Successfully removed $Email (RS ID: $UserId) affiliation!" -OutputToConsole
+            New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Successfully removed $Email affiliation!" -Detail "RightScale User ID: $UserId"
             RETURN $true
         }
         else {
             Write-Log -Message "Error removing $Email (RS ID: $UserId) affiliation! Status Code: $($deleteResult.StatusCode)" -OutputToConsole
+            New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Error removing $Email affiliation!" -Detail "$deleteResultVariable `nStatus Code: $($deleteResult.StatusCode)`n`n$($deleteResult.RawContent)"
             RETURN $false
         }
     }
     catch {
-        Write-Log -Message "Error removing $Email (RS ID: $UserId) affiliation! $($_ | Out-String)" -OutputToConsole
-        New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Error removing $Email affiliation!" -Detail ($_ | Out-String)
+        Write-Log -Message "Error removing $Email (RS ID: $UserId) affiliation! Error: $($_.ErrorDetails.ToString())" -OutputToConsole
+        New-RSAuditEntry -RSHost $RSHost -AccessToken $AccessToken -Auditee $auditeeHref -Summary "RS Group Sync: Error removing $Email affiliation!" -Detail ($_.ErrorDetails.ToString())
+        RETURN $false
     }
 }
 
@@ -358,6 +359,20 @@ if(Test-Path $configFile) {
     . $configFile
 }
 
+# Look for Active Directory Module
+if(Get-Module -Name ActiveDirectory -ListAvailable) {
+    Write-Log "Found Active Directory PowerShell module!" -OutputToConsole
+    $useADModule = $true
+    $adSecurePassword = ConvertTo-SecureString $LDAP_USER_PASSWORD -AsPlainText -Force
+    $adCredential = New-Object System.Management.Automation.PSCredential $LDAP_USER,$adSecurePassword
+    $GROUP_CLASS = "group"
+    $USER_CLASS = "user"
+    $PRINCIPAL_UID_ATTRIBUTE = "objectSID"
+}
+else {
+    $useADModule = $false
+}
+
 # Get access token from CM
 Write-Log -Message  "Getting RightScale CM Access Token..." -OutputToConsole
 $contentType = "application/json"
@@ -366,7 +381,7 @@ $oauthBody = @{
     "grant_type"="refresh_token";
     "refresh_token"=$REFRESH_TOKEN
 } | ConvertTo-Json
-$oauthResult = Invoke-RestMethod -UseBasicParsing -Uri "https://$RS_HOST/api/oauth2" -Method Post -Headers $oauthHeader -ContentType $contentType -Body $oauthBody
+$oauthResult = Invoke-RestMethod -Uri "https://$RS_HOST/api/oauth2" -Method Post -Headers $oauthHeader -ContentType $contentType -Body $oauthBody
 $accessToken = $oauthResult.access_token
 
 if (-not($accessToken)) {
@@ -388,7 +403,7 @@ New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHre
 $parameterErrors = 0
 $failedParameters = ""
 $sensitiveParameters = "REFRESH_TOKEN","LDAP_USER_PASSWORD"
-$regularParameters = "COMPANY_NAME","DEFAULT_PHONE_NUMBER","CM_SSO_ACCOUNT","GRS_ACCOUNT","RS_HOST","IDP_HREF","LDAP_HOST","LDAP_USER","BASE_GROUP_DN","GROUP_CLASS","USER_CLASS","PRINCIPAL_UID_ATTRIBUTE","EMAIL_DOMAIN"
+$regularParameters = "COMPANY_NAME","DEFAULT_PHONE_NUMBER","CM_SSO_ACCOUNT","GRS_ACCOUNT","RS_HOST","IDP_HREF","LDAP_HOST","LDAP_USER","BASE_GROUP_DN","GROUP_CLASS","USER_CLASS","GROUP_SEARCH_STRING","PRINCIPAL_UID_ATTRIBUTE","EMAIL_DOMAIN"
 $parametersToValidate = $regularParameters + $sensitiveParameters
 foreach($parameterToValidate in $parametersToValidate) {
     if (((Get-Variable -Name $parameterToValidate -ValueOnly -ErrorAction SilentlyContinue) -eq "") -or ((Get-Variable -Name $parameterToValidate -ValueOnly -ErrorAction SilentlyContinue) -eq $null)) {
@@ -410,17 +425,6 @@ else{
     $useTLS = ""
 }
 
-if (($GROUP_SEARCH_STRING.Length -eq 0) -and ($LIST_OF_GROUPS.Length -eq 0)) {
-    Write-Log -Message "Either GROUP_SEARCH_STRING or LIST_OF_GROUPS must be defined. Please define one." -OutputToConsole
-    $parameterErrors ++
-    $failedParameters += "GROUP_SEARCH_STRING", "LIST_OF_GROUPS"
-}
-elseif (($GROUP_SEARCH_STRING.Length -gt 0) -and ($LIST_OF_GROUPS.Length -gt 0)) {
-    Write-Log -Message "GROUP_SEARCH_STRING and LIST_OF_GROUPS cannot be used together. Please define one and leave the other blank." -OutputToConsole
-    $parameterErrors ++
-    $failedParameters += "GROUP_SEARCH_STRING", "LIST_OF_GROUPS"
-}
-
 if($parameterErrors -gt 0) {
     $parameterFailureMessage = "The following parameters have failed validation: $failedParameters"
     Write-Log -Message $parameterFailureMessage  -OutputToConsole
@@ -430,32 +434,25 @@ if($parameterErrors -gt 0) {
 }
 
 ## LDAP directory
-# Determine if using list or search string and build the filter
-if ($GROUP_SEARCH_STRING -ne $null) {
-    $groupsFilter = "(&(objectClass=$GROUP_CLASS)(cn=$GROUP_SEARCH_STRING))"
-    Write-Log -Message "Getting all LDAP groups matching '$GROUP_SEARCH_STRING'..." -OutputToConsole
+# Build the groups LDAP filter
+$groupsToFilter = $null
+foreach ($group in $GROUP_SEARCH_STRING.Split(',')) {
+    $groupsToFilter += "(cn=$group)"
 }
-elseif ($LIST_OF_GROUPS -ne $null) {
-    $groupsToFilter = $null
-    foreach ($group in $LIST_OF_GROUPS.Split(',')) {
-        $groupsToFilter += "(cn=$group)"
-    }
-    $groupsFilter = "(&(objectClass=$ENV:GROUP_CLASS)(|$groupsToFilter))"
-    Write-Log -Message "Getting all groups matching '$LIST_OF_GROUPS'..." -OutputToConsole
-}
-else {
-    $parameterFailureMessage = "A 'GROUP_SEARCH_STRING' or 'LIST_OF_GROUPS' must be specified!"
-    Write-Log -Message $parameterFailureMessage  -OutputToConsole
-    New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Parameter validation failure" -Detail $parameterFailureMessage
-    New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
-    EXIT 1
-}
+$groupsFilter = "(&(objectClass=$GROUP_CLASS)(|$groupsToFilter))"
+Write-Log -Message "Getting all groups matching '$GROUP_SEARCH_STRING'..." -OutputToConsole
 
 # Get the LDAP groups
 try {
-    $rawGroups = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_GROUP_DN' '$groupsFilter' dn cn member" -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue) 2>&1
+    $ldapGroups = @()
+    if($useADModule) {
+        $rawGroups = Get-ADGroup -LDAPFilter $groupsFilter -Credential $adCredential -SearchBase $BASE_GROUP_DN -Server $LDAP_HOST -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue
+    }
+    else {
+        $rawGroups = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -b '$BASE_GROUP_DN' '$groupsFilter' dn cn member" -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue) 2>&1
+    }
 
-    if($lastexitcode -ne 0) {
+    if(-not($?)) {
         $ldapErrorMessage = "Error retrieving groups from LDAP!"
         Write-Log "$ldapErrorMessage Error: $ldapGroupLookupError" -OutputToConsole
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($ldapGroupLookupError | Out-String)
@@ -469,10 +466,28 @@ try {
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
         EXIT 1
     }
+    
+    if($useADModule) {
+        foreach ($group in $rawGroups) {
+            $groupMembers = $group | Get-ADGroupMember -Credential $adCredential -Server $LDAP_HOST | Select-Object -ExpandProperty distinguishedName
+            $object = New-Object -TypeName PSObject
+            $object | Add-Member -MemberType NoteProperty -Name dn -Value $group.DistinguishedName
+            $object | Add-Member -MemberType NoteProperty -Name cn -Value $group.Name
+            $object | Add-Member -MemberType NoteProperty -Name members -Value $groupMembers
+            $ldapGroups += $object
+        }
+    }
     else {
         $rawGroups = $rawGroups | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
         $rawGroups = $rawGroups | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
         $rawGroups = $rawGroups -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
+        foreach ($group in $rawGroups) {
+            $object = New-Object -TypeName PSObject
+            $object | Add-Member -MemberType NoteProperty -Name dn -Value $($group -split '\n' -match '^dn:' -replace 'dn:\s','')
+            $object | Add-Member -MemberType NoteProperty -Name cn -Value $($group -split '\n' -match '^cn:' -replace 'cn:\s','')
+            $object | Add-Member -MemberType NoteProperty -Name members -Value ($group -split '\n' -match '^member:' -replace 'member:\s','')
+            $ldapGroups += $object
+        }
     }
 }
 catch {
@@ -482,38 +497,52 @@ catch {
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
     EXIT 1
 }
-
-# Create LDAP groups object
-$ldapGroups = @()
-foreach ($group in $rawGroups) {
-    $object = New-Object -TypeName PSObject
-    $object | Add-Member -MemberType NoteProperty -Name dn -Value $($group -split '\n' -match '^dn:' -replace 'dn:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name cn -Value $($group -split '\n' -match '^cn:' -replace 'cn:\s','')
-    $object | Add-Member -MemberType NoteProperty -Name members -Value ($group -split '\n' -match '^member:' -replace 'member:\s','')
-    $ldapGroups += $object
-}
 Write-Log -Message "$($ldapGroups.Count) LDAP Group(s) found." -OutputToConsole
 
-# Collect only users of the discovered RightScale groups - single LDAP query per user
+# Get the LDAP users of the discovered RightScale groups - single LDAP query per user
 $ldapUsers = @()
 $allLDAPRSUsers = $ldapGroups.members | Select-Object -Unique
 foreach ($ldapUser in $allLDAPRSUsers) {
     try {
         Write-Log -Message "Getting user details for '$ldapUser'..." -OutputToConsole
-        $rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
-        if($lastexitcode -ne 0) {
-            $ldapErrorMessage = "Error retrieving user details from LDAP!"
+        if($useADModule) {
+            $rawUser = Get-ADObject -Identity $ldapUser -Credential $adCredential -Properties 'sn','givenName','mail','telephoneNumber',$PRINCIPAL_UID_ATTRIBUTE,'objectClass' -Server $LDAP_HOST -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue
+        }
+        else {
+            $rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
+        }
+
+        if(-not($?)) {
+            $ldapErrorMessage = "Error retrieving user from LDAP!"
             Write-Log "$ldapErrorMessage Error: $ldapUserLookupError" -OutputToConsole
             New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($ldapUserLookupError | Out-String)
-            New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
-            EXIT 1
         }
         elseif (-not($rawUser)) {
-            $ldapErrorMessage = "Error retrieving users details from LDAP!"
-            Write-Log "$ldapErrorMessage Error: No users returned!" -OutputToConsole
+            $ldapErrorMessage = "Error retrieving user from LDAP!"
+            Write-Log "$ldapErrorMessage Error: No user returned!" -OutputToConsole
             New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail "User not found: $ldapUser"
-            New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
-            EXIT 1
+        }
+
+        if($useADModule) {
+            $objectClass = $rawUser.objectClass
+            if($objectClass -contains $USER_CLASS) {
+                $phoneNumber = $null
+                $object = New-Object -TypeName PSObject
+                $object | Add-Member -MemberType NoteProperty -Name dn -Value $rawUser.DistinguishedName
+                $object | Add-Member -MemberType NoteProperty -Name sn -Value $rawUser.sn
+                $object | Add-Member -MemberType NoteProperty -Name givenName -Value $rawUser.givenName
+                $object | Add-Member -MemberType NoteProperty -Name email -Value $rawUser.mail
+                $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value $rawUser.$PRINCIPAL_UID_ATTRIBUTE.Value
+                $phoneNumber = $rawUser.telephoneNumber
+                if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
+                    $phoneNumber = $DEFAULT_PHONE_NUMBER
+                }
+                $object | Add-Member -MemberType NoteProperty -Name telephoneNumber -Value $phoneNumber
+                $ldapUsers += $object
+            }
+            else {
+                Write-Log -Message "Object: $ldapUser is not of objectClass $USER_CLASS! objectClass(es): $($objectClass -join ', ')" -OutputToConsole
+            }
         }
         else {
             $rawUser = $rawUser | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
@@ -527,7 +556,7 @@ foreach ($ldapUser in $allLDAPRSUsers) {
                 $object | Add-Member -MemberType NoteProperty -Name sn -Value $($rawUser -split '\n' -match '^sn:' -replace 'sn:\s','')
                 $object | Add-Member -MemberType NoteProperty -Name givenName -Value $($rawUser -split '\n' -match '^givenName:' -replace 'givenName:\s','')
                 $object | Add-Member -MemberType NoteProperty -Name email -Value $($rawUser -split '\n' -match '^mail:' -replace 'mail:\s','')
-                $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value  $($rawUser -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
+                $object | Add-Member -MemberType NoteProperty -Name $PRINCIPAL_UID_ATTRIBUTE -Value $($rawUser -split '\n' -match "^$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):" -replace "$([regex]::Escape($PRINCIPAL_UID_ATTRIBUTE)):\s",'')
                 $phoneNumber = $($rawUser -split '\n' -match '^telephoneNumber:' -replace 'telephoneNumber:\s','')
                 if (($phoneNumber -eq $null) -or ($phoneNumber.length -eq 0) -or ($phoneNumber -notmatch '^[\.()\s\d+-]+$')) {
                     $phoneNumber = $DEFAULT_PHONE_NUMBER
@@ -541,11 +570,9 @@ foreach ($ldapUser in $allLDAPRSUsers) {
         }
     }
     catch {
-        $ldapErrorMessage = "Error retrieving user details from LDAP!"
+        $ldapErrorMessage = "Error retrieving user from LDAP!"
         Write-Log "$ldapErrorMessage Error: $($_)" -OutputToConsole
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: $ldapErrorMessage" -Detail ($_ | Out-String)
-        New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
-        EXIT 1
     }
 }
 Write-Log -Message "$($ldapUsers.Count) LDAP User(s) found." -OutputToConsole
@@ -553,7 +580,7 @@ Write-Log -Message "$($ldapUsers.Count) LDAP User(s) found." -OutputToConsole
 ## RightScale Governance
 # Get RightScale users
 Write-Log -Message "Getting All RightScale Users... " -OutputToConsole
-$rsGRSUsers = Invoke-RestMethod -UseBasicParsing -Uri "https://$RS_HOST/grs/orgs/$GRS_ACCOUNT/users" -Method Get -Headers $grsHeader -ContentType $contentType
+$rsGRSUsers = Invoke-RestMethod -Uri "https://$RS_HOST/grs/orgs/$GRS_ACCOUNT/users" -Method Get -Headers $grsHeader -ContentType $contentType
 if(-not($rsGRSUsers)) {
     Write-Log -Message "Error retrieving users from RightScale!" -OutputToConsole
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
@@ -598,8 +625,8 @@ if($usersToCreate.count -gt 0){
     }
 
     # Create audit entry for users created and not created
-    $usersCreatedDetails = "Users created successfully:`n$($newUsersCreated | Out-String)"
-    $usersCreatedDetails += "Users NOT created successfully:`n$($newUsersNotCreated | Out-String)"
+    $usersCreatedDetails = "Users created successfully:$($newUsersCreated | Format-List | Out-String)"
+    $usersCreatedDetails += "Users NOT created successfully:$($newUsersNotCreated | Format-List | Out-String)"
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: User(s) Created" -Detail $usersCreatedDetails
 }
 else {
@@ -616,7 +643,7 @@ if($newUsersCreated.count -gt 0) {
 
 # Get RightScale groups
 Write-Log -Message "Getting All RightScale Groups..." -OutputToConsole
-$rsGRSGroups = Invoke-RestMethod -UseBasicParsing -Uri "https://$RS_HOST/grs/orgs/$GRS_ACCOUNT/groups" -Method Get -Headers $grsHeader -ContentType $contentType
+$rsGRSGroups = Invoke-RestMethod -Uri "https://$RS_HOST/grs/orgs/$GRS_ACCOUNT/groups" -Method Get -Headers $grsHeader -ContentType $contentType
 if(-not($rsGRSGroups)) {
     Write-Log -Message "Error retrieving groups from RightScale!" -OutputToConsole
     New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: Complete (With Errors)" -Detail (Get-Content -Path $logFilePath | Out-String)
@@ -628,6 +655,7 @@ Write-Log -Message "$($rsGRSGroups.Count) RightScale Group(s) found." -OutputToC
 # Replaces the Users in a Group. If an empty list of Users is passed in the request, then all the Users are removed from the Group given in the request.
 Write-Log -Message "Determining group memberships and updating..." -OutputToConsole
 foreach ($ldapGroup in $ldapGroups) {
+    $prunedMembers = @()
     $group = $null
     $group = $rsGRSGroups | Where-Object { $_.name -eq $ldapGroup.cn }
     if ($group -ne $null) {
@@ -636,7 +664,8 @@ foreach ($ldapGroup in $ldapGroups) {
         $group_id = $group.id
         Write-Log -Message "Group: $group_name (RS ID: $group_id)" -OutputToConsole
         if($ldapGroup.members.count -gt 0) {
-            foreach ($member in $ldapGroup.members) {
+            $prunedMembers = Compare-Object -ReferenceObject $ldapgroup.members -DifferenceObject $ldapUsers.dn -IncludeEqual -ExcludeDifferent | Select-Object -ExpandProperty InputObject
+            foreach ($member in $prunedMembers) {
                 $user_id = $null
                 $user_email = $null
                 $user_email = $ldapUsers | Where-Object { $_.dn -eq $member } | Select-Object -ExpandProperty email
@@ -682,8 +711,8 @@ if($usersToDelete.count -gt 0){
             }
         }
         # Create audit entry for users removed and not removed
-        $usersDeletedDetails = "Users removed successfully:`n$($usersDeleted | Out-String)`n"
-        $usersDeletedDetails += "Users NOT removed successfully:`n$($usersNotDeleted | Out-String)`n"
+        $usersDeletedDetails = "Users removed successfully:$($usersDeleted | Format-List | Out-String)"
+        $usersDeletedDetails += "Users NOT removed successfully:$($usersNotDeleted | Format-List | Out-String)"
         New-RSAuditEntry -RSHost $RS_HOST -AccessToken $accessToken -Auditee $auditeeHref -Summary "RS Group Sync: User(s) Removed" -Detail $usersDeletedDetails
     }
     else {
