@@ -175,14 +175,6 @@ param(
 
 $errorActionPreference = 'stop'
 
-# crontab information
-# ensure script has execute permission set
-# ensure PATH is available in crontab
-# use config file (groupsync.config.ps1), stored in the same path 
-# as the script, to set the inputs and keep them out of crontab.
-# to run every 15 minutes:
-# */15 * * * * /path/to/script/rightscale_group_sync.ps1
-
 # Define log file
 $logFilePath = "/tmp/rightscale_group_sync.log"
 
