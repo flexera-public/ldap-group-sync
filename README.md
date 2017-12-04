@@ -118,7 +118,7 @@ $task | Set-ScheduledTask
 Assumptions:
 * The script has the execute permission set
 * `PATH` is available in crontab.
-* A [parameter includes file](#Parameter-Includes-File) is stored in the same path 
+* A [parameter includes file](#parameter-includes-file) is stored in the same path 
 as the script with all parameters defined.  
 
 This example executes the Group Sync Script every 15 minutes:
@@ -129,7 +129,7 @@ This example executes the Group Sync Script every 15 minutes:
 ## Executing as a standalone script via a Scheduled Task in Windows
 Assumptions:
 * The downloaded script has been [unblocked](https://blogs.msdn.microsoft.com/delay/p/unblockingdownloadedfile/)
-* A [parameter includes file](#Parameter_Includes_File) is stored in the same path 
+* A [parameter includes file](#parameter-includes-file) is stored in the same path 
 as the script with all parameters defined.  
 
 This example creates a scheduled task that executes the Group Sync Script every 15 minutes:
