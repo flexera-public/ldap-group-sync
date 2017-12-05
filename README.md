@@ -96,7 +96,7 @@ Executing the script as RightScript on a RightLink managed server allows you to 
 
 You can also schedule the execution of the RightScript from the managed servers scheduling utility. Here is an example of some code that would setup a scheduled task on a Windows server to run the Per User Group Sync script, against Active Directory, every 15 minutes using RightScale credentials for the `LDAP_USER_PASSWORD` and `REFRESH_TOKEN` parameters.
 ```powershell
-$jobname = "RightScale AD Group Sync"
+$jobname = "RightScale Group Sync"
 
 ## Define the arguments for RSC and the script
 $script = "rl10 run_right_script /rll/run/right_script `"right_script_id=0123456789`" `"arguments=LDAP_HOST=text:dc01.acme.com`" `"arguments=LDAP_USER=text:directoryuser@acme.com`" `"arguments=LDAP_USER_PASSWORD=cred:Active_Directory_User_Password`" `"arguments=BASE_GROUP_DN=text:ou=Groups,DC=acme,DC=com`" `"arguments=GROUP_CLASS=text:group`" `"arguments=USER_CLASS=text:person`" `"arguments=PRINCIPAL_UID_ATTRIBUTE=text:objectSID`" `"arguments=GROUP_SEARCH_STRING=text:RightScaleGroup_* `" `"arguments=COMPANY_NAME=text:Acme Co.`" `"arguments=DEFAULT_PHONE_NUMBER=text:111-555-1212`" `"arguments=EMAIL_DOMAIN=text:acme.com`" `"arguments=RS_HOST=text:us-3.rightscale.com`" `"arguments=CM_SSO_ACCOUNT=text:54321`" `"arguments=GRS_ACCOUNT=text:12345`" `"arguments=REFRESH_TOKEN=cred:RightScale_Governance_Refresh_Token`" `"arguments=IDP_HREF=text:/api/identity_providers/123`" `"arguments=START_TLS=text:false`" `"arguments=PURGE_USERS=text:false`""
@@ -135,15 +135,19 @@ as the script with all parameters defined.
 This example creates a scheduled task that executes the Group Sync Script every 15 minutes:
 ```powershell
 $jobname = "RightScale Group Sync"
+
+## Define PowerShell execution policy and path to the Group Sync Script
 $script = "-ExecutionPolicy Bypass c:\path\to\script\rightscale_group_sync.ps1"
 
+## Run every 'n' minutes
 $repeat = (New-TimeSpan -Minutes 15)
+
 $action = New-ScheduledTaskAction –Execute "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument $script
 $duration = New-TimeSpan -Days 3650
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval $repeat -RepetitionDuration $duration
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -DontStopOnIdleEnd
 $task = Register-ScheduledTask -TaskName $jobname -Action $action -Trigger $trigger -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Settings $settings
-$task.Triggers.repetition.Duration = ""
+$task.Triggers.repetition.Duration = "" ## Setting duration to an empty string == 'indefinitely'
 $task.Triggers.repetition.StopAtDurationEnd = "False"
 $task | Set-ScheduledTask
 ```
