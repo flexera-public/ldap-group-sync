@@ -1,4 +1,4 @@
-v1.2
+v2.0
 -----
 * Removed the per group sync script
 * Added support for nested groups
