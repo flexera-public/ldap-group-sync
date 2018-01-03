@@ -186,7 +186,7 @@ function Write-Log ($Message, [switch]$OutputToConsole) {
         New-Item -Path $logFilePath -ItemType "File" -Force > $null
     }
     
-    $currentTime = Get-Date -Format "dd-MM-yyyy HH:mm:ss z"
+    $currentTime = Get-Date -Format "dd-MMM-yyyy HH:mm:ss z"
     $logMessage = "[$currentTime] $Message"
     $logMessage | Out-File -FilePath $logFilePath -Append -Encoding "UTF8"
 
