@@ -12,14 +12,14 @@ It uses native PowerShell on Windows or [PowerShell core](https://github.com/Pow
 1. For Active Directory, installation of the Active Directory PowerShell module is recommended.
 
 ## Important Considerations
-1. The tool will not follow memberships for nested groups. Users must be direct members of the LDAP groups to be synchronized.
+1. This tool will follow memberships for nested groups. All users of nested groups will be treated as members of the parent group.
 1. Groups must already exist in RightScale with the proper roles assigned. This tool will not create groups.
 1. Once a group is managed by this tool, you will no longer be able to manually make modifications to its members in RightScale Governance. Any changes you make to the group in RightScale Governance will be removed once the next group sync is run. Manage the group in your directory service
 1. The time it takes to do a full sync is directly related to the number of groups and users you are synchronizing. We recommend running it a few times manually to get a good baseline before scheduling it to run on a reoccurring basis. Remember to add a buffer to the schedule to account for latency and additional users and groups that may be added in the future.
 1. We recommend creating a group in RightScale Governance to manage users with the `enterprise_manager` role. It is important that this group is not synchronized from your directory service. This will ensure you have a fail-safe for gaining access to RightScale.
 
 ## Active Directory(AD)
-1. If your directory service is Active Directory, and you will be running this script on a Microsoft Windows Server, please install the Active Directory PowerShell module so the script can use those cmdlets.
+1. If your directory service is Active Directory, and you will be running this script on a Microsoft Windows Server, please install the Active Directory PowerShell module.
 1. When the Active Directory PowerShell module is installed on the Microsoft Windows Server running this script, the values of some parameters will automatically be overridden. Read the parameter details below carefully.  
 
 ## How It Works
@@ -29,10 +29,6 @@ It uses native PowerShell on Windows or [PowerShell core](https://github.com/Pow
 1. All new users are created based on the attributes collected from LDAP.  
 1. A query is run against your Organization in RightScale to collect the groups that match your LDAP groups and adjust their membership to match your LDAP groups membership.  
 1. (Optional) Users that are no longer members of your LDAP groups are removed from your RightScale Organization.  
-
-## Script Differences
-**RightScale_Group_Sync-PerUserLookup.ps1** - Performs a single LDAP query per user to collect details.  
-**RightScale_Group_Sync-PerGroupLookup.ps1** - Performs an LDAP query using a filter of `isMemberOf`, or `memberOf` for Active Directory, scoped to the discovered groups.
 
 ## Parameter Includes File
 As opposed to passing all the parameters in during script execution, you can optionally create a file called `groupsync.config.ps1` in the same path as the group sync script and set some or all of the parameters there.
@@ -47,7 +43,6 @@ $LDAP_USER_PASSWORD = "OpenSesame1"
 
 # LDAP Info
 $BASE_GROUP_DN = "OU=Groups,DC=acme,DC=com"
-$BASE_USER_DN = "OU=People,DC=acme,DC=com"
 $GROUP_CLASS = "groupOfNames"
 $USER_CLASS = "person"
 $PRINCIPAL_UID_ATTRIBUTE = "entryUUID"
@@ -74,7 +69,6 @@ $LDAP_USER_PASSWORD = "OpenSesame1"
 
 # AD Info
 $BASE_GROUP_DN = "OU=Groups,DC=acme,DC=com"
-$BASE_USER_DN = "OU=People,DC=acme,DC=com"
 $GROUP_SEARCH_STRING = "RightScaleGroup_*,RS_Account_Admins"
 $COMPANY_NAME = "ACME Corp."
 $DEFAULT_PHONE_NUMBER = "555-867-5309"
@@ -152,6 +146,10 @@ $task.Triggers.repetition.StopAtDurationEnd = "False"
 $task | Set-ScheduledTask
 ```
 
+## Verified Against
+* Windows Active Directory - 2012R2 Functional Level
+* OpenDJ - Version 5.0.0
+
 ## Script Parameters
 All parameters are required unless otherwise noted:  
 
@@ -179,11 +177,6 @@ Password for the LDAP_USER account.
 `BASE_GROUP_DN`  
 The base dn for groups in the Directory Service.  
 **Example:** ou=Groups,DC=acme,DC=com
-
-`BASE_USER_DN`  
-The base dn for users in the Directory Service.  
-**Note:** The `BASE_USER_DN` variable is not used with the "Per User Lookup" script: _RightScale_Group_Sync-PerUserLookup.ps1_  
-**Example:** ou=Users,DC=acme,DC=com
 
 `GROUP_CLASS` **  
 The Directory Services Object Class for groups of users.  

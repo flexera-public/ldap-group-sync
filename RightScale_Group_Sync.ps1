@@ -1,10 +1,11 @@
-#!/usr/bin/env powershell
+#!/usr/bin/env pwsh
 # ---
-# RightScript Name: RightScale Group Sync - Per User Lookup
+# RightScript Name: RightScale Group Sync
 # Description: >
 #   Synchronizes members of a LDAP directory service with RightScale Governance Groups.
 #   Requires: PowerShell Core and LDAPSEARCH or Active Directory PowerShell Module
 #   If a group is managed by this script, you will be unable to manually add/remove users via RightScale Governance.
+#   View the readme for further information: https://github.com/rs-services/ldap-group-sync
 # Inputs:
 #   COMPANY_NAME:
 #     Category: RIGHTSCALE
@@ -127,6 +128,10 @@
 #       - text:false
 #     Default: text:false
 # ...
+
+#
+# Version: 1.2
+#
 
 # Copyright 2017 RightScale
 #
@@ -461,7 +466,7 @@ try {
     
     if($useADModule) {
         foreach ($group in $rawGroups) {
-            $groupMembers = $group | Get-ADGroupMember -Credential $adCredential -Server $LDAP_HOST | Select-Object -ExpandProperty distinguishedName
+            $groupMembers = $group | Get-ADGroupMember -Credential $adCredential -Server $LDAP_HOST -Recursive | Select-Object -ExpandProperty distinguishedName
             $object = New-Object -TypeName PSObject
             $object | Add-Member -MemberType NoteProperty -Name dn -Value $group.DistinguishedName
             $object | Add-Member -MemberType NoteProperty -Name cn -Value $group.Name
@@ -474,10 +479,17 @@ try {
         $rawGroups = $rawGroups | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
         $rawGroups = $rawGroups -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
         foreach ($group in $rawGroups) {
+            $cn = $($group -split '\n' -match '^cn:' -replace 'cn:\s','')
+            $dn = $($group -split '\n' -match '^dn:' -replace 'dn:\s','')
+            $ldapFilter = "(&(objectClass=$USER_CLASS)(isMemberOf=$dn))"
+            $rawMembers = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' '$ldapFilter' uniqueMember" -ErrorVariable ldapGroupLookupError -ErrorAction SilentlyContinue) 2>&1
+            $rawMembers = $rawMembers | ForEach-Object {$_.TrimEnd()} | Where-Object {$_ -ne ""} #Remove empty lines
+            $rawMembers = $rawMembers | Where-Object {$_ -notmatch "# ref"} #Needed for Active Directory
+            $rawMembers = $rawMembers -join "`n" -split '(?ms)(?=^dn:)' -match '^dn:' #Split into separate objects
             $object = New-Object -TypeName PSObject
-            $object | Add-Member -MemberType NoteProperty -Name dn -Value $($group -split '\n' -match '^dn:' -replace 'dn:\s','')
-            $object | Add-Member -MemberType NoteProperty -Name cn -Value $($group -split '\n' -match '^cn:' -replace 'cn:\s','')
-            $object | Add-Member -MemberType NoteProperty -Name members -Value ($group -split '\n' -match '^member:' -replace 'member:\s','')
+            $object | Add-Member -MemberType NoteProperty -Name dn -Value $dn
+            $object | Add-Member -MemberType NoteProperty -Name cn -Value $cn
+            $object | Add-Member -MemberType NoteProperty -Name members -Value $($rawMembers -split '\n' -match '^dn:' -replace 'dn:\s','')
             $ldapGroups += $object
         }
     }
@@ -663,7 +675,7 @@ foreach ($ldapGroup in $ldapGroups) {
                 $user_email = $ldapUsers | Where-Object { $_.dn -eq $member } | Select-Object -ExpandProperty email
                 $user_id = $rsGRSUsers | Where-Object { $_.email -eq $user_email } | Select-Object -ExpandProperty id
                 if($user_id -eq $null) {
-                    Write-Log -Message "Error retrieving RightScale ID for $member. Skipping..." -OutputToConsole
+                    Write-Log -Message "* Error retrieving RightScale ID for $member. Skipping..." -OutputToConsole
                 }
                 else {
                     Write-Log -Message "* Member: $user_email (RS ID: $user_id)" -OutputToConsole
