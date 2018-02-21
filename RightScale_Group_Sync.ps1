@@ -130,7 +130,7 @@
 # ...
 
 #
-# Version: 2.0
+# Version: 2.0.1
 #
 
 # Copyright 2017 RightScale
