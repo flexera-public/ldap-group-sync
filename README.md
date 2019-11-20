@@ -21,6 +21,8 @@ It uses native PowerShell on Windows or [PowerShell core](https://github.com/Pow
 ## Active Directory(AD)
 1. If your directory service is Active Directory, and you will be running this script on a Microsoft Windows Server, please install the Active Directory PowerShell module.
 1. When the Active Directory PowerShell module is installed on the Microsoft Windows Server running this script, the values of some parameters will automatically be overridden. Read the parameter details below carefully.  
+1. If your security groups contain members from other domains, you will need to ensure the domain controller you are contacting has the Global Catalog role, and you will need to update the `-Server` parameter for the `Get-ADObject` cmdlet from `-Server $LDAP_HOST` to `-Server "$($LDAP_HOST):3268"`. [Reference](http://www.out-null.eu/2014/05/12/get-aduser-a-referral-was-returned-from-the-server/)  
+
 
 ## How It Works
 1. The tool gathers groups from an LDAP directory service based on a comma separated list of groups. Wildcards are supported in the group names.
