@@ -1,5 +1,7 @@
 # RightScale LDAP Group Sync Tool
 
+:exclamation: *NOTE for Active Directory: This branch uses the distinguished name of each user to construct the FQDN of the domain to query with the `Get-ADObject` command. When using the FQDN of a domain as the the value for the `-Server` parameter, there is no guarantee which Domain Controller it will contact.*
+
 This group sync script is designed to sync groups from an LDAP provider, or Active Directory, to RightScale Governance.
 It uses native PowerShell on Windows or [PowerShell core](https://github.com/PowerShell/PowerShell) on Linux and ldapsearch(Part of [openldap](https://www.openldap.org/software/download/) tools) or the [Active Directory PowerShell Module](https://technet.microsoft.com/en-us/library/ee617195.aspx).
 

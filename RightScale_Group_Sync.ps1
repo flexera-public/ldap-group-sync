@@ -130,7 +130,7 @@
 # ...
 
 #
-# Version: 2.0
+# Version: 2.0.1
 #
 
 # Copyright 2017 RightScale
@@ -510,7 +510,8 @@ foreach ($ldapUser in $allLDAPRSUsers) {
     try {
         Write-Log -Message "Getting user details for '$ldapUser'..." -OutputToConsole
         if($useADModule) {
-            $rawUser = Get-ADObject -Identity $ldapUser -Credential $adCredential -Properties 'sn','givenName','mail','telephoneNumber',$PRINCIPAL_UID_ATTRIBUTE,'objectClass' -Server $LDAP_HOST -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue
+            $domainFQDN = ($ldapUser -Split "," | Where-Object {$_ -like "DC=*"}) -join '.' -replace 'DC=', ''
+            $rawUser = Get-ADObject -Identity $ldapUser -Credential $adCredential -Properties 'sn','givenName','mail','telephoneNumber',$PRINCIPAL_UID_ATTRIBUTE,'objectClass' -Server $domainFQDN -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue
         }
         else {
             $rawUser = (Invoke-Expression -Command "ldapsearch -LLL -x -H $LDAP_HOST $useTLS -D '$LDAP_USER' -w '$LDAP_USER_PASSWORD' -s base -b '$ldapUser' sn givenName mail telephoneNumber $PRINCIPAL_UID_ATTRIBUTE objectClass" -ErrorVariable ldapUserLookupError -ErrorAction SilentlyContinue) 2>&1
